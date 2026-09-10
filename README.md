@@ -20,6 +20,11 @@
 - 邮箱验证码注册与登录
 - 深浅主题切换和每日学习规则设置
 
+![alt text](image.png)
+![alt text](image-1.png)
+![alt text](image-2.png)
+![alt text](image-3.png)
+
 
 ## 技术栈
 
