@@ -1,0 +1,84 @@
+services:
+  # 单词背诵应用
+  app:
+    build: .
+    container_name: vocab_app
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      # Flask 密钥（生产环境务必改为随机强密钥）
+      SECRET_KEY: ${SECRET_KEY:-please-change-to-random-strong-secret}
+      # MySQL 连接信息（指向同一 compose 网络内的 mysql 服务）
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-vocab_app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-please-change-me}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-vocabulary_memorization}
+      # 邮箱 SMTP（注册验证码用）
+      MAIL_SERVER: ${MAIL_SERVER:-smtp.qq.com}
+      MAIL_PORT: ${MAIL_PORT:-465}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      MAIL_FROM: ${MAIL_FROM:-小易教育}
+      # Ollama（可选；同一 Docker 网络内主机名 ollama）
+      OLLAMA_BASE_URL: http://ollama:11434/v1
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+    networks:
+      - vocab_net
+
+  # MySQL 数据库
+  mysql:
+    image: mysql:8.0
+    container_name: vocab_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-vocabulary_memorization}
+      MYSQL_USER: ${MYSQL_USER:-vocab_app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-please-change-me}
+    # 数据持久化到命名卷
+    volumes:
+      - vocab_mysql_data:/var/lib/mysql
+    # 健康检查：MySQL 就绪后 app 才启动
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpass}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    ports:
+      - "3306:3306"
+    networks:
+      - vocab_net
+
+  # Ollama（可选；如已在外部运行，可注释掉本服务并改 OLLAMA_BASE_URL）
+  ollama:
+    image: ollama/ollama:latest
+    container_name: vocab_ollama
+    restart: unless-stopped
+    volumes:
+      - vocab_ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - vocab_net
+    # 启动后自动拉取 qwen2.5:7b 模型（首次约 5GB，请耐心等待）
+    # 如已手动 pull 过，可注释掉此 healthcheck / 入口脚本
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list | grep -q qwen2.5:7b || ollama pull qwen2.5:7b"]
+      interval: 60s
+      timeout: 600s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  vocab_mysql_data:
+  vocab_ollama_data:
+
+networks:
+  vocab_net:
+    driver: bridge

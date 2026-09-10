@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}单词背诵{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script>
+        // 防闪烁：提前应用主题
+        (function() {
+            var t = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+</head>
+<body>
+    {% if user %}
+    <header class="navbar">
+        <div class="nav-inner">
+            <a href="{{ url_for('index') }}" class="logo">
+                <span class="logo-mark">词</span>
+                <span class="logo-text">Vocabulary</span>
+            </a>
+            <nav class="nav-links">
+                <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">主页</a>
+                <a href="{{ url_for('wordbook') }}" class="{% if request.endpoint == 'wordbook' %}active{% endif %}">单词书</a>
+                <a href="{{ url_for('today') }}" class="{% if request.endpoint == 'today' %}active{% endif %}">今日背诵</a>
+                <a href="{{ url_for('study') }}" class="{% if request.endpoint == 'study' %}active{% endif %}">背诵</a>
+                <a href="{{ url_for('sentences') }}" class="{% if request.endpoint in ('sentences','sentences_study') %}active{% endif %}">句子背诵</a>
+                <a href="{{ url_for('groups') }}" class="{% if request.endpoint in ('groups','group_detail','group_study') %}active{% endif %}">我的分组</a>
+                <a href="{{ url_for('settings') }}" class="{% if request.endpoint == 'settings' %}active{% endif %}">设置</a>
+            </nav>
+            <div class="nav-user">
+                <button class="theme-toggle" id="themeToggle" title="切换深浅模式">🌙</button>
+                <span class="user-badge">{{ user.username }}</span>
+                <form method="post" action="{{ url_for('logout') }}" class="logout-form">
+                    <button type="submit" class="btn-ghost">退出</button>
+                </form>
+            </div>
+        </div>
+    </header>
+    {% endif %}
+
+    <main class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-wrap">
+                    {% for category, message in messages %}
+                    <div class="flash flash-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Toast 通知容器 -->
+    <div class="toast-container" id="toastContainer"></div>
+    <script>
+    // 全局 Toast 通知
+    function showToast(message, type) {
+        type = type || 'ok';
+        var container = document.getElementById('toastContainer');
+        if (!container) return;
+        var toast = document.createElement('div');
+        toast.className = 'toast-msg' + (type === 'error' ? ' toast-error' : (type === 'info' ? ' toast-info' : ''));
+        toast.textContent = message;
+        container.appendChild(toast);
+        setTimeout(function() {
+            toast.classList.add('fade-out');
+            setTimeout(function() { toast.remove(); }, 300);
+        }, 2500);
+    }
+    </script>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script>
+        // 主题切换
+        (function() {
+            var btn = document.getElementById('themeToggle');
+            if (!btn) return;
+            var updateIcon = function() {
+                var t = document.documentElement.getAttribute('data-theme');
+                btn.textContent = t === 'dark' ? '☀️' : '🌙';
+            };
+            updateIcon();
+            btn.addEventListener('click', function() {
+                var cur = document.documentElement.getAttribute('data-theme');
+                var next = cur === 'dark' ? 'light' : 'dark';
+                document.documentElement.setAttribute('data-theme', next);
+                localStorage.setItem('theme', next);
+                updateIcon();
+            });
+        })();
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

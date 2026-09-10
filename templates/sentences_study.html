@@ -1,0 +1,263 @@
+{% extends 'base.html' %}
+{% block title %}句子背诵 - 单词背诵{% endblock %}
+{% block content %}
+<div class="study-wrap">
+    <div class="study-meta">
+        <span id="studyCount">第 1 / {{ sentences|length }} 条</span>
+        {% if group_name %}<span class="study-streak">📚 {{ group_name }}</span>{% endif %}
+        <span id="studyStreak" class="study-streak"></span>
+    </div>
+
+    <div class="study-progress">
+        <div class="progress-bar">
+            <div class="progress-fill" id="studyProgressFill" style="width:0%"></div>
+        </div>
+        <div class="progress-text">已完成 <span id="studyDone">0</span> / {{ sentences|length }}</div>
+    </div>
+
+    <div class="card-stage">
+        <div class="flip-card flip-card-sent" id="flipCard">
+            <div class="flip-face flip-front">
+                <div class="flip-direction" id="cardDirection">正面</div>
+                <div class="flip-sent-scroll">
+                    <div class="flip-sent-text" id="cardFront"></div>
+                </div>
+                <div class="flip-hint">先思考答案，再翻面对照</div>
+            </div>
+            <div class="flip-face flip-back">
+                <div class="flip-direction" id="cardBackDir">反面</div>
+                <div class="flip-sent-scroll">
+                    <div class="flip-sent-text" id="cardBack"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="pron-bar">
+        <button class="pron-btn" id="pronUS" title="美音朗读">
+            <span class="pron-flag">US</span> 🔊
+        </button>
+        <button class="pron-btn" id="pronUK" title="英音朗读">
+            <span class="pron-flag">UK</span> 🔊
+        </button>
+        <span class="pron-hint">点击 US/UK 朗读英文句子</span>
+    </div>
+
+    <div class="study-actions">
+        <button class="btn-secondary" id="flipBtn">翻面</button>
+        <button class="mark-btn mark-forgotten" id="forgotBtn" title="忘记">✗</button>
+        <button class="mark-btn mark-known" id="knownBtn" title="熟记">✓</button>
+    </div>
+
+    <div class="study-nav">
+        <button class="btn-ghost" id="prevBtn">上一条</button>
+        <button class="btn-ghost" id="nextBtn">下一条</button>
+        <a href="{{ url_for('sentences') }}" class="btn-ghost">返回列表</a>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+    const RAW = {{ sentences | tojson }};
+    // 分组打卡目标：完成后跳转到打卡界面（携带 group_id）
+    const GROUP_ID = {{ group_id or 'null' }};
+
+    function shuffle(arr) {
+        const a = arr.slice();
+        for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [a[i], a[j]] = [a[j], a[i]];
+        }
+        return a;
+    }
+    const ITEMS = shuffle(RAW);
+    let idx = 0;
+    let flipped = false;
+    // 背诵逻辑：本轮中第一次点 ✗ 的条目会被推到本轮末尾，必须全部点过 ✓ 才算完成
+    const deferredIds = new Set();   // 本轮已点过 ✗ 的 id 集合
+    let finishedCount = 0;           // 本轮已成功点过 ✓ 的条目数
+
+    function playFlipSound() {
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const o = ctx.createOscillator();
+            const g = ctx.createGain();
+            o.connect(g); g.connect(ctx.destination);
+            o.type = 'triangle';
+            o.frequency.setValueAtTime(660, ctx.currentTime);
+            o.frequency.exponentialRampToValueAtTime(990, ctx.currentTime + 0.08);
+            g.gain.setValueAtTime(0.2, ctx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+            o.start();
+            o.stop(ctx.currentTime + 0.3);
+        } catch (e) { }
+    }
+
+    // 句子朗读（浏览器内置 SpeechSynthesis）
+    function speakSentence(accent) {
+        const it = ITEMS[idx];
+        if (!it) return;
+        if ('speechSynthesis' in window) {
+            const u = new SpeechSynthesisUtterance(it.english);
+            u.lang = accent === 'uk' ? 'en-GB' : 'en-US';
+            u.rate = 0.95;
+            const voices = window.speechSynthesis.getVoices();
+            const v = voices.find(v => v.lang === u.lang);
+            if (v) u.voice = v;
+            window.speechSynthesis.cancel();
+            window.speechSynthesis.speak(u);
+        }
+    }
+
+    function render() {
+        if (idx < 0) idx = 0;
+        if (idx >= ITEMS.length) idx = ITEMS.length - 1;
+        const it = ITEMS[idx];
+        const frontEl = document.getElementById('cardFront');
+        const backEl = document.getElementById('cardBack');
+        frontEl.textContent = it.front;
+        backEl.textContent = it.back;
+        // 字体自适应：根据字数调整字号，短句大字、长文小字
+        autoFontSize(frontEl, it.front.length);
+        autoFontSize(backEl, it.back.length);
+        document.getElementById('cardDirection').textContent = it.is_english_front ? '英文（猜中文）' : '中文（猜英文）';
+        document.getElementById('cardBackDir').textContent = it.is_english_front ? '中文释义' : '英文原文';
+        document.getElementById('studyCount').textContent = `第 ${idx + 1} / ${ITEMS.length} 条`;
+        const streak = document.getElementById('studyStreak');
+        if (it.consecutive && it.consecutive > 0) {
+            streak.textContent = `已连续答对 ${it.consecutive}/3`;
+        } else {
+            streak.textContent = '尚无背诵记录';
+        }
+        if (it.next_review_at) {
+            streak.textContent += ` · 已熟悉（${it.next_review_at} 重新出现）`;
+        }
+        flipBack();
+        playFlipSound();
+        updateProgress();
+    }
+
+    // 字体自适应：根据内容字数动态设定字号
+    function autoFontSize(el, len) {
+        // 短句（< 30 字）大字 24px；中等 18px；长文 14px；超长 12px
+        let size = 24;
+        if (len > 300) size = 13;
+        else if (len > 200) size = 14;
+        else if (len > 120) size = 16;
+        else if (len > 60) size = 18;
+        else if (len > 30) size = 20;
+        el.style.fontSize = size + 'px';
+        el.style.lineHeight = '1.6';
+    }
+
+    function updateProgress() {
+        const pct = ITEMS.length > 0 ? Math.min(100, Math.round((idx + 1) / ITEMS.length * 100)) : 0;
+        document.getElementById('studyProgressFill').style.width = pct + '%';
+        document.getElementById('studyDone').textContent = finishedCount;
+    }
+
+    function flipBack() {
+        flipped = false;
+        document.getElementById('flipCard').classList.remove('flipped');
+    }
+    function flip() {
+        flipped = true;
+        document.getElementById('flipCard').classList.add('flipped');
+    }
+
+    document.getElementById('flipCard').addEventListener('click', flip);
+    document.getElementById('flipBtn').addEventListener('click', flip);
+    document.getElementById('prevBtn').addEventListener('click', () => { if (idx > 0) { idx--; render(); } });
+    document.getElementById('nextBtn').addEventListener('click', () => {
+        if (idx < ITEMS.length - 1) { idx++; render(); }
+        else { showToast('已到最后一条', 'info'); }
+    });
+
+    // 找到下一个未点过 ✓ 的条目（跳过本轮 deferredIds 中的，直到末尾再回头）
+    function nextUnfinished() {
+        if (ITEMS.length === 0) return -1;
+        // 如果全部都已 deferred（即全部点过 ✗），仍允许在末尾结束
+        if (finishedCount >= ITEMS.length) return -1;
+        let next = idx + 1;
+        while (next < ITEMS.length && deferredIds.has(ITEMS[next].id)) next++;
+        if (next < ITEMS.length) return next;
+        // 到末尾仍未找到未点 ✗ 的，说明所有剩余都点过 ✗，但 finishedCount 没满 → 继续从 0 找
+        next = 0;
+        while (next <= idx && deferredIds.has(ITEMS[next].id)) next++;
+        return next <= idx ? next : -1;
+    }
+
+    function mark(result) {
+        const it = ITEMS[idx];
+        const fd = new FormData();
+        fd.append('result', result);
+        fetch(`/api/sentence/${it.id}/mark`, { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(res => {
+                if (res.success) {
+                    if (res.consecutive < res.familiar_threshold) {
+                        document.getElementById('studyStreak').textContent = `连续答对 ${res.consecutive}/${res.familiar_threshold}`;
+                    } else {
+                        document.getElementById('studyStreak').textContent = `✓ 已熟悉（${res.next_review_at} 重新出现）`;
+                    }
+                    if (result === 'known') {
+                        // 第一次点 ✓ 才计入本轮完成；重复点 ✓ 不重复计数
+                        if (!deferredIds.has(it.id)) {
+                            finishedCount++;
+                        } else {
+                            // 之前 deferred 过又点 ✓ ：视为完成，移出 deferred
+                            deferredIds.delete(it.id);
+                            finishedCount++;
+                        }
+                        updateProgress();
+                    } else {
+                        // 第一次点 ✗：推到本轮末尾（标记为 deferred），不增加 finishedCount
+                        if (!deferredIds.has(it.id)) {
+                            deferredIds.add(it.id);
+                            showToast('已放入本轮末尾，稍后再来', 'info');
+                        }
+                    }
+                    setTimeout(() => {
+                        // 检查是否完成本轮（所有条目都点过 ✓）
+                        if (finishedCount >= ITEMS.length) {
+                            showToast('全部句子背诵完成！', 'ok');
+                            const target = GROUP_ID
+                                ? `{{ url_for("checkpoint") }}?group_id=${GROUP_ID}`
+                                : '{{ url_for("sentences") }}';
+                            setTimeout(() => { window.location.href = target; }, 1200);
+                            return;
+                        }
+                        const next = nextUnfinished();
+                        if (next >= 0) { idx = next; render(); }
+                        else {
+                            showToast('全部句子背诵完成！', 'ok');
+                            const target = GROUP_ID
+                                ? `{{ url_for("checkpoint") }}?group_id=${GROUP_ID}`
+                                : '{{ url_for("sentences") }}';
+                            setTimeout(() => { window.location.href = target; }, 1200);
+                        }
+                    }, 600);
+                } else {
+                    showToast(res.message || '标记失败', 'error');
+                }
+            })
+            .catch(() => { /* 网络错误静默：不弹窗 */ });
+    }
+
+    document.getElementById('knownBtn').addEventListener('click', () => mark('known'));
+    document.getElementById('forgotBtn').addEventListener('click', () => mark('forgotten'));
+    document.getElementById('pronUS').addEventListener('click', () => speakSentence('us'));
+    document.getElementById('pronUK').addEventListener('click', () => speakSentence('uk'));
+
+    // 加载语音列表（部分浏览器异步加载）
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.onvoiceschanged = () => { };
+    }
+
+    if (ITEMS.length === 0) {
+        document.getElementById('cardFront').textContent = '尚无句子，请先去添加';
+    } else {
+        render();
+    }
+</script>
+{% endblock %}

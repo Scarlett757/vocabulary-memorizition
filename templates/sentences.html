@@ -1,0 +1,392 @@
+{% extends 'base.html' %}
+{% block title %}句子背诵 - 单词背诵{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">句子背诵</h1>
+    <p class="page-sub">手动添加英汉句子，支持给中文背英文或给英文背中文</p>
+</div>
+
+<div class="sentence-add-card">
+    <h3 class="block-title">添加句子</h3>
+    <form id="addForm" class="sentence-form">
+        <div class="textarea-with-count">
+            <textarea name="english" id="enInput" placeholder="英文句子，如：Practice makes perfect." rows="2" required
+                maxlength="500"></textarea>
+            <span class="char-count" id="enCount">0 / 500</span>
+        </div>
+        <div class="cn-row">
+            <div class="textarea-with-count" style="flex:1;">
+                <textarea name="chinese" id="cnInput" placeholder="中文释义（留空自动 AI 翻译），如：熟能生巧。" rows="2"
+                    maxlength="500"></textarea>
+                <span class="char-count" id="cnCount">0 / 500</span>
+            </div>
+            <button type="button" class="btn-secondary ai-translate-btn" id="aiTranslateBtn" title="调用本地 Ollama 翻译">✨ AI
+                翻译</button>
+        </div>
+        <div class="sentence-dir">
+            <label class="radio-label level-opt active">
+                <input type="radio" name="direction" value="auto" checked> 先英文后中文
+            </label>
+            <label class="radio-label level-opt">
+                <input type="radio" name="direction" value="cn2en"> 先中文后英文
+            </label>
+        </div>
+        <button type="submit" class="btn-primary" id="addSubmitBtn">添加</button>
+    </form>
+</div>
+
+<div class="sentence-list">
+    <div class="sentence-list-head">
+        <h3 class="block-title">我的句子（{{ sentences|length }} 条）</h3>
+        <div class="list-actions">
+            <select id="globalDir" class="gtype-select">
+                <option value="">—设置全部方向—</option>
+                <option value="auto">全部：先英文后中文</option>
+                <option value="cn2en">全部：先中文后英文</option>
+            </select>
+            {% if sentences %}
+            <a href="{{ url_for('sentences_study') }}" class="btn-primary">开始背诵 →</a>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="col-toggle-bar">
+        <label class="toggle-label"><input type="checkbox" id="toggleEn" checked> 显示英文</label>
+        <label class="toggle-label"><input type="checkbox" id="toggleCn" checked> 显示中文</label>
+        <span class="toggle-divider"></span>
+        <span class="batch-hint" id="batchHint" style="display:none;">已选 <b id="selCount">0</b> 项</span>
+        <button class="btn-secondary" id="batchGroupBtn">📂 添加到分组</button>
+    </div>
+
+    <div class="table-wrap">
+        <table class="word-table" id="sentTable">
+            <thead>
+                <tr>
+                    <th class="col-sel"><input type="checkbox" id="selectAll"></th>
+                    <th class="col-idx">序号</th>
+                    <th class="col-en">英文</th>
+                    <th class="col-cn">中文</th>
+                    <th class="col-status">方向</th>
+                    <th class="col-status">进度</th>
+                    <th class="col-action">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in sentences %}
+                <tr data-id="{{ s.id }}">
+                    <td class="col-sel"><input type="checkbox" class="row-check" data-sentence-id="{{ s.id }}"></td>
+                    <td class="col-idx">{{ loop.index }}</td>
+                    <td class="col-en">{{ s.english }}</td>
+                    <td class="col-cn">{{ s.chinese }}</td>
+                    <td class="col-status">
+                        <select class="dir-select" data-id="{{ s.id }}">
+                            <option value="auto" {{ 'selected' if (s.direction or 'auto' )=='auto' }}>先英后中</option>
+                            <option value="cn2en" {{ 'selected' if s.direction=='cn2en' }}>先中后英</option>
+                        </select>
+                    </td>
+                    <td class="col-status">
+                        <span class="mini-text">{{ s.consecutive_correct or 0 }}/3</span>
+                        {% if s.next_review_at %}<span class="mini-done">✓熟悉</span>{% endif %}
+                    </td>
+                    <td class="col-action">
+                        <button class="btn-forget" data-id="{{ s.id }}">忘记</button>
+                        <button class="btn-remove" data-id="{{ s.id }}">删除</button>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" class="empty">尚未添加句子</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 加入分组弹窗 -->
+<div class="group-select-modal" id="groupModal">
+    <div class="group-select-box">
+        <span class="modal-close" id="modalClose">×</span>
+        <h4>选择分组（将选中的 <b id="modalCount">0</b> 条句子加入）</h4>
+        <div class="group-dropdown-wrap" style="margin-bottom:14px;">
+            <select class="group-dropdown" id="groupDropdown">
+                <option value="">-- 选择已有分组 --</option>
+            </select>
+            <button class="btn-primary" id="addToSelectedGroup">加入分组</button>
+        </div>
+        <div class="group-new-row">
+            <input type="text" id="newGroupName" placeholder="新建分组名">
+            <button class="btn-primary" id="createAndAdd">新建并加入</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+    const addForm = document.getElementById('addForm');
+    const enInput = document.getElementById('enInput');
+    const cnInput = document.getElementById('cnInput');
+    const aiBtn = document.getElementById('aiTranslateBtn');
+    const addBtn = document.getElementById('addSubmitBtn');
+    let translating = false;
+
+    // 字数统计（500 词限制）
+    const enCountEl = document.getElementById('enCount');
+    const cnCountEl = document.getElementById('cnCount');
+    function updateCount(input, countEl) {
+        const len = input.value.length;
+        countEl.textContent = `${len} / 500`;
+        countEl.style.color = len > 450 ? 'var(--bad)' : 'var(--muted)';
+    }
+    enInput.addEventListener('input', () => updateCount(enInput, enCountEl));
+    cnInput.addEventListener('input', () => updateCount(cnInput, cnCountEl));
+    updateCount(enInput, enCountEl);
+    updateCount(cnInput, cnCountEl);
+
+    function doTranslate() {
+        const en = enInput.value.trim();
+        if (!en) { showToast('请先输入英文句子', 'error'); enInput.focus(); return; }
+        if (translating) return;
+        translating = true;
+        aiBtn.disabled = true;
+        aiBtn.textContent = '⏳ 翻译中…';
+        fetch('{{ url_for("api_translate") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ english: en })
+        })
+            .then(r => r.json())
+            .then(res => {
+                if (res.success) {
+                    cnInput.value = res.chinese;
+                    showToast('翻译完成', 'ok');
+                } else {
+                    showToast(res.message || '翻译失败，请手动填写', 'error');
+                }
+            })
+            .catch(() => showToast('翻译服务不可用，请手动填写中文', 'error'))
+            .finally(() => {
+                translating = false;
+                aiBtn.disabled = false;
+                aiBtn.textContent = '✨ AI 翻译';
+            });
+    }
+
+    aiBtn.addEventListener('click', doTranslate);
+    // 英文框失焦且中文为空时自动翻译
+    enInput.addEventListener('blur', () => {
+        if (enInput.value.trim() && !cnInput.value.trim()) doTranslate();
+    });
+
+    addForm.addEventListener('submit', e => {
+        e.preventDefault();
+        // 中文留空时先自动翻译再提交
+        if (!cnInput.value.trim() && enInput.value.trim()) {
+            if (translating) { showToast('正在翻译中，请稍候…', 'info'); return; }
+            translating = true;
+            aiBtn.disabled = true; addBtn.disabled = true;
+            aiBtn.textContent = '⏳ 翻译中…';
+            fetch('{{ url_for("api_translate") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ english: enInput.value.trim() })
+            })
+                .then(r => r.json())
+                .then(res => {
+                    if (res.success) cnInput.value = res.chinese;
+                    submitAdd();
+                })
+                .catch(() => submitAdd())
+                .finally(() => {
+                    translating = false;
+                    aiBtn.disabled = false; addBtn.disabled = false;
+                    aiBtn.textContent = '✨ AI 翻译';
+                });
+            return;
+        }
+        submitAdd();
+    });
+
+    function submitAdd() {
+        const fd = new FormData(addForm);
+        fetch('{{ url_for("sentences_add") }}', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(res => {
+                if (res.success) {
+                    addForm.reset();
+                    document.querySelectorAll('.sentence-dir .level-opt').forEach(l => l.classList.remove('active'));
+                    document.querySelector('.sentence-dir .level-opt').classList.add('active');
+                    location.reload();
+                } else showToast(res.message || '添加失败', 'error');
+            });
+    }
+
+    document.querySelectorAll('.sentence-dir .level-opt input').forEach(inp => {
+        inp.addEventListener('change', () => {
+            document.querySelectorAll('.sentence-dir .level-opt').forEach(l => l.classList.remove('active'));
+            inp.closest('.level-opt').classList.add('active');
+        });
+    });
+
+    document.querySelectorAll('.btn-remove').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const id = btn.dataset.id;
+            const row = btn.closest('tr');
+            fetch(`/sentences/remove/${id}`, { method: 'POST' })
+                .then(r => r.json())
+                .then(res => { if (res.success) row.remove(); });
+        });
+    });
+
+    // 句子列表中的"忘记"按钮：重置该句子的熟练进度
+    document.querySelectorAll('.btn-forget').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const id = btn.dataset.id;
+            const row = btn.closest('tr');
+            fetch(`/api/sentence/${id}/forget`, { method: 'POST' })
+                .then(r => r.json())
+                .then(res => {
+                    if (res.success) {
+                        // 重置该行进度显示为 0/3，移除熟悉标记
+                        const progressSpan = row.querySelector('.mini-text');
+                        if (progressSpan) progressSpan.textContent = '0/3';
+                        const doneMark = row.querySelector('.mini-done');
+                        if (doneMark) doneMark.remove();
+                        showToast('已重置该句子进度', 'ok');
+                    } else {
+                        showToast(res.message || '操作失败', 'error');
+                    }
+                })
+                .catch(() => showToast('网络错误', 'error'));
+        });
+    });
+
+    // 列显示/隐藏
+    function applyColVisibility() {
+        const showEn = document.getElementById('toggleEn').checked;
+        const showCn = document.getElementById('toggleCn').checked;
+        document.querySelectorAll('#sentTable .col-en').forEach(el => el.style.display = showEn ? '' : 'none');
+        document.querySelectorAll('#sentTable .col-cn').forEach(el => el.style.display = showCn ? '' : 'none');
+    }
+    ['toggleEn', 'toggleCn'].forEach(id => {
+        document.getElementById(id).addEventListener('change', applyColVisibility);
+    });
+
+    // 逐条方向修改
+    document.querySelectorAll('.dir-select').forEach(sel => {
+        sel.addEventListener('change', () => {
+            const id = sel.dataset.id;
+            const fd = new FormData();
+            fd.append('direction', sel.value);
+            fetch(`/api/sentence/${id}/direction`, { method: 'POST', body: fd })
+                .then(r => r.json())
+                .then(res => { if (res.success) sel.style.borderColor = 'var(--accent)'; });
+        });
+    });
+
+    // 全局方向设置
+    document.getElementById('globalDir').addEventListener('change', e => {
+        const dir = e.target.value;
+        if (!dir) return;
+        if (!confirm(`确认将全部句子方向设为「${dir === 'cn2en' ? '先中文后英文' : '先英文后中文'}」？`)) {
+            e.target.value = '';
+            return;
+        }
+        const fd = new FormData();
+        fd.append('direction', dir);
+        fetch('{{ url_for("sentences_set_all_direction") }}', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(res => { if (res.success) location.reload(); });
+    });
+
+    // 批量选择 + 加入分组
+    function getSelectedSids() {
+        return Array.from(document.querySelectorAll('.row-check:checked')).map(cb => cb.dataset.sentenceId);
+    }
+    function updateSelCount() {
+        const ids = getSelectedSids();
+        document.getElementById('selCount').textContent = ids.length;
+        document.getElementById('batchHint').style.display = ids.length ? '' : 'none';
+        document.getElementById('modalCount').textContent = ids.length;
+    }
+    document.querySelectorAll('.row-check').forEach(cb => cb.addEventListener('change', updateSelCount));
+    document.getElementById('selectAll').addEventListener('change', e => {
+        document.querySelectorAll('.row-check').forEach(cb => { cb.checked = e.target.checked; });
+        updateSelCount();
+    });
+
+    // 加入分组弹窗
+    const groupModal = document.getElementById('groupModal');
+    const groupDropdown = document.getElementById('groupDropdown');
+
+    document.getElementById('batchGroupBtn').addEventListener('click', () => {
+        const ids = getSelectedSids();
+        if (!ids.length) { showToast('请先勾选句子', 'error'); return; }
+        updateSelCount();
+        groupDropdown.innerHTML = '<option value="">-- 选择已有分组 --</option>';
+        fetch('{{ url_for("user_groups_api") }}')
+            .then(r => r.json())
+            .then(res => {
+                const typeMap = { word: '单词', sentence: '句子', mixed: '混合' };
+                if (res.success && res.groups.length) {
+                    res.groups.forEach(g => {
+                        const opt = document.createElement('option');
+                        opt.value = g.id;
+                        opt.textContent = g.name + '（' + (typeMap[g.gtype] || g.gtype) + '）';
+                        groupDropdown.appendChild(opt);
+                    });
+                }
+                groupModal.classList.add('show');
+            });
+    });
+
+    function batchAddToGroup(gid) {
+        const ids = getSelectedSids();
+        let done = 0, fail = 0;
+        Promise.all(ids.map(sid => {
+            const fd = new FormData();
+            fd.append('sentence_id', sid);
+            fd.append('group_id', gid);
+            return fetch('{{ url_for("group_add_sentence") }}', { method: 'POST', body: fd })
+                .then(r => r.json())
+                .then(res => { if (res.success) done++; else fail++; });
+        })).then(() => {
+            showToast(`成功 ${done} 条${fail ? '，失败 ' + fail + ' 条' : ''}`, fail ? 'error' : 'ok');
+            groupModal.classList.remove('show');
+            document.querySelectorAll('.row-check:checked').forEach(cb => cb.checked = false);
+            document.getElementById('selectAll').checked = false;
+            updateSelCount();
+        });
+    }
+
+    document.getElementById('addToSelectedGroup').addEventListener('click', () => {
+        const gid = groupDropdown.value;
+        if (!gid) { showToast('请选择分组', 'error'); return; }
+        batchAddToGroup(gid);
+    });
+
+    document.getElementById('modalClose').addEventListener('click', () => groupModal.classList.remove('show'));
+    groupModal.addEventListener('click', e => { if (e.target === groupModal) groupModal.classList.remove('show'); });
+
+    document.getElementById('createAndAdd').addEventListener('click', () => {
+        const name = document.getElementById('newGroupName').value.trim();
+        if (!name) { showToast('请输入分组名', 'error'); return; }
+        const ids = getSelectedSids();
+        let done = 0;
+        Promise.all(ids.map(sid => {
+            const fd = new FormData();
+            fd.append('sentence_id', sid);
+            fd.append('new_group', name);
+            return fetch('{{ url_for("group_add_sentence") }}', { method: 'POST', body: fd })
+                .then(r => r.json())
+                .then(res => { if (res.success) done++; });
+        })).then(() => {
+            showToast(`已新建分组「${name}」并加入 ${done} 条句子`);
+            groupModal.classList.remove('show');
+            document.querySelectorAll('.row-check:checked').forEach(cb => cb.checked = false);
+            document.getElementById('selectAll').checked = false;
+            updateSelCount();
+        });
+    });
+</script>
+{% endblock %}

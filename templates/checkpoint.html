@@ -1,0 +1,189 @@
+{% extends 'base.html' %}
+{% block title %}今日打卡 - 单词背诵{% endblock %}
+{% block content %}
+<div class="checkpoint-wrap">
+    <!-- 彩带层 -->
+    <div class="confetti-layer" id="confetti"></div>
+
+    <div class="checkpoint-grid">
+        <!-- 左：本月月历 -->
+        <div class="calendar-card">
+            <div class="cal-header">
+                <span class="cal-title">{{ year }}年 {{ month }}月</span>
+                <div class="cal-nav">
+                    <a href="{{ url_for('checkpoint') }}?month={{ prev_month.strftime('%Y-%m') }}"
+                       class="cal-nav-btn" title="上一月">‹</a>
+                    <a href="{{ url_for('checkpoint') }}?month={{ next_month.strftime('%Y-%m') }}"
+                       class="cal-nav-btn" title="下一月">›</a>
+                </div>
+            </div>
+            <div class="cal-week">
+                <span>日</span><span>一</span><span>二</span><span>三</span>
+                <span>四</span><span>五</span><span>六</span>
+            </div>
+            <div class="cal-grid" id="calGrid"></div>
+            <div class="cal-legend">
+                <span class="legend-item"><span class="legend-dot stamped"></span>已打卡</span>
+                <span class="legend-item"><span class="legend-dot today"></span>今日</span>
+                <span class="legend-item"><span class="legend-dot empty"></span>未打卡</span>
+            </div>
+        </div>
+
+        <!-- 右：打卡卡面 -->
+        <div class="checkpoint-card">
+            <div class="cp-date">{{ year }}年 {{ month }}月 {{ day }}日</div>
+            <div class="cp-title">今日打卡</div>
+
+            <!-- 盖章动画 -->
+            <div class="stamp-stage">
+                <div class="stamp {% if today_checked_in %}stamp-landed{% else %}stamp-flying{% endif %}" id="stamp">
+                    <div class="stamp-inner">
+                        <div class="stamp-num">{{ today_learned }}</div>
+                        <div class="stamp-label">词</div>
+                    </div>
+                </div>
+                <div class="streak-badge" id="streakBadge" style="{% if streak == 0 %}display:none;{% endif %}">
+                    🔥 连续 {{ streak }} 天
+                </div>
+            </div>
+
+            <div class="cp-summary">
+                <p>今日目标 <strong>{{ goal }}</strong> 个单词</p>
+                <p>已完成 <strong>{{ today_learned }}</strong> 个单词 · <strong>{{ today_sentences }}</strong> 个句子</p>
+                {% if group_name %}
+                <p class="cp-source">来自分组：<strong>{{ group_name }}</strong></p>
+                {% endif %}
+            </div>
+
+            <div class="cp-actions">
+                <button class="btn-primary cp-checkin-btn" id="checkinBtn"
+                        data-source="{{ 'group' if group_id else 'daily' }}"
+                        data-group-id="{{ group_id or '' }}">
+                    {% if today_checked_in %}🔁 再打卡一次{% else %}✓ 立即打卡{% endif %}
+                </button>
+                <div class="continue-group">
+                    <span>继续背：</span>
+                    <a href="{{ url_for('study', continue_count=10) }}" class="continue-pill">+10</a>
+                    <a href="{{ url_for('study', continue_count=20) }}" class="continue-pill">+20</a>
+                    <a href="{{ url_for('study', continue_count=30) }}" class="continue-pill">+30</a>
+                </div>
+                <div class="custom-continue">
+                    <span>自选：</span>
+                    <input type="number" id="customCount" min="1" max="100" value="15" class="num-input">
+                    <button class="continue-pill custom-go" id="customGo">开始</button>
+                </div>
+                <a href="{{ url_for('today') }}" class="btn-secondary">返回今日背诵</a>
+                <a href="{{ url_for('index') }}" class="btn-ghost">回主页</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+// 月历渲染
+const YEAR = {{ year }};
+const MONTH = {{ month }};  // 1-12
+const TODAY_DAY = {{ day }};
+const IS_CURRENT_MONTH = (YEAR === new Date().getFullYear() && MONTH === (new Date().getMonth() + 1));
+const STAMPED_DAYS = {{ stamped_days | tojson }};
+const TODAY_CHECKED_IN = {{ 'true' if today_checked_in else 'false' }};
+const STREAK = {{ streak }};
+
+function renderCalendar() {
+    const grid = document.getElementById('calGrid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    const firstDay = new Date(YEAR, MONTH - 1, 1).getDay();       // 本月 1 号是周几（0=日）
+    const daysInMonth = new Date(YEAR, MONTH, 0).getDate();        // 本月总天数
+    // 前置空白格
+    for (let i = 0; i < firstDay; i++) {
+        const blank = document.createElement('span');
+        blank.className = 'cal-cell blank';
+        grid.appendChild(blank);
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+        const cell = document.createElement('div');
+        cell.className = 'cal-cell';
+        if (STAMPED_DAYS.includes(d)) cell.classList.add('stamped');
+        if (IS_CURRENT_MONTH && d === TODAY_DAY) cell.classList.add('today');
+        cell.innerHTML = `<span class="cal-num">${d}</span>` +
+                         (STAMPED_DAYS.includes(d) ? '<span class="cal-stamp">✓</span>' : '');
+        grid.appendChild(cell);
+    }
+}
+renderCalendar();
+
+// 盖章动画
+const stamp = document.getElementById('stamp');
+if (stamp && !TODAY_CHECKED_IN) {
+    setTimeout(() => {
+        stamp.classList.remove('stamp-flying');
+        stamp.classList.add('stamp-landed');
+    }, 700);
+}
+
+// 彩带：仅在今日首次打卡时撒花
+if (!TODAY_CHECKED_IN || STREAK > 0) {
+    const confetti = document.getElementById('confetti');
+    const colors = ['#D4A24C', '#1F3D2B', '#4F8A4A', '#B5462B', '#E8C766', '#7A6F5C', '#6C5CE7'];
+    for (let i = 0; i < 40; i++) {
+        const c = document.createElement('span');
+        c.className = 'confetti-piece';
+        c.style.left = Math.random() * 100 + '%';
+        c.style.background = colors[Math.floor(Math.random() * colors.length)];
+        c.style.animationDelay = (Math.random() * 0.8) + 's';
+        c.style.animationDuration = (1.8 + Math.random() * 1.6) + 's';
+        c.style.transform = `rotate(${Math.random() * 360}deg)`;
+        confetti.appendChild(c);
+    }
+}
+
+// 打卡按钮：调用 API 记录打卡
+document.getElementById('checkinBtn').addEventListener('click', () => {
+    const btn = document.getElementById('checkinBtn');
+    const fd = new FormData();
+    fd.append('source', btn.dataset.source || 'daily');
+    if (btn.dataset.groupId) fd.append('group_id', btn.dataset.groupId);
+    fetch('{{ url_for("api_checkin") }}', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(res => {
+            if (res.success) {
+                showToast(`✓ 打卡成功！今日已背 ${res.words_count} 个单词、${res.sentences_count} 个句子`, 'ok');
+                // 立即在月历今日格盖章
+                const cells = document.querySelectorAll('#calGrid .cal-cell.today');
+                cells.forEach(c => {
+                    c.classList.add('stamped');
+                    if (!c.querySelector('.cal-stamp')) {
+                        const s = document.createElement('span');
+                        s.className = 'cal-stamp';
+                        s.textContent = '✓';
+                        c.appendChild(s);
+                    }
+                });
+                // 更新按钮文案
+                btn.textContent = '🔁 再打卡一次';
+                // 重新触发盖章动画
+                if (stamp) {
+                    stamp.classList.remove('stamp-landed');
+                    stamp.classList.add('stamp-flying');
+                    setTimeout(() => {
+                        stamp.classList.remove('stamp-flying');
+                        stamp.classList.add('stamp-landed');
+                    }, 700);
+                }
+            } else {
+                showToast(res.message || '打卡失败', 'error');
+            }
+        })
+        .catch(() => { showToast('网络错误，请稍后重试', 'error'); });
+});
+
+// 自选继续背数量
+document.getElementById('customGo').addEventListener('click', () => {
+    const n = parseInt(document.getElementById('customCount').value, 10) || 10;
+    const count = Math.max(1, Math.min(100, n));
+    window.location.href = `{{ url_for('study') }}?continue_count=${count}`;
+});
+</script>
+{% endblock %}

@@ -1,0 +1,81 @@
+{% extends 'base.html' %}
+{% block title %}我的分组 - 单词背诵{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">我的分组</h1>
+    <p class="page-sub">收藏单词/句子到自定义分组，按组单独背诵</p>
+</div>
+
+<div class="group-create-card">
+    <h3 class="block-title">新建分组</h3>
+    <form id="createForm" class="group-create-form">
+        <input type="text" name="name" placeholder="分组名，如：一单元 / 收藏 / 难词" required>
+        <select name="gtype" class="gtype-select">
+            <option value="word">单词分组</option>
+            <option value="sentence">句子分组</option>
+            <option value="mixed">混合分组</option>
+        </select>
+        <button type="submit" class="btn-primary">创建</button>
+    </form>
+</div>
+
+<div class="group-list">
+    <h3 class="block-title">我的分组（{{ groups|length }} 个）</h3>
+    {% if groups %}
+    <div class="group-grid">
+        {% for g in groups %}
+        <div class="group-card" data-id="{{ g.id }}">
+            <div class="group-head">
+                <h4 class="group-name">{{ g.name }}</h4>
+                <span class="group-type badge">{{ {'word':'单词','sentence':'句子','mixed':'混合'}[g.gtype] }}</span>
+            </div>
+            <div class="group-stats">
+                <span class="gs-total">共 {{ g.total }} 项</span>
+                <span class="gs-fam">熟悉 {{ g.familiar }}</span>
+                <span class="gs-learn">学习中 {{ g.learning }}</span>
+                <span class="gs-new">新 {{ g.new }}</span>
+            </div>
+            {% if g.total > 0 %}
+            <div class="group-progress">
+                <div class="mini-bar"><div class="mini-fill" style="width:{{ (g.familiar * 100 // g.total) if g.total else 0 }}%"></div></div>
+            </div>
+            {% endif %}
+            <div class="group-actions">
+                <a href="{{ url_for('group_detail', gid=g.id) }}" class="btn-ghost">预览</a>
+                {% if g.total > 0 %}
+                <a href="{{ url_for('group_study', gid=g.id) }}" class="btn-primary">背诵 →</a>
+                {% endif %}
+                <button class="btn-remove" data-id="{{ g.id }}">删除</button>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-card">尚未创建分组，先在上方新建一个吧</div>
+    {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.getElementById('createForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    fetch('{{ url_for("groups_create") }}', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(res => {
+            if (res.success) location.reload();
+            else showToast(res.message || '创建失败', 'error');
+        });
+});
+
+document.querySelectorAll('.group-card .btn-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+        if (!confirm('确认删除该分组？')) return;
+        const id = btn.dataset.id;
+        fetch(`/groups/${id}/delete`, { method: 'POST' })
+            .then(r => r.json())
+            .then(res => { if (res.success) location.reload(); });
+    });
+});
+</script>
+{% endblock %}

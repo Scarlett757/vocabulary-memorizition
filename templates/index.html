@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+{% block title %}主页 - 单词背诵{% endblock %}
+{% block content %}
+<div class="hero">
+    <h1 class="hero-title">今日单词，日积月累</h1>
+    <p class="hero-sub">欢迎回来，{{ user.username }}。当前词汇本：<strong>{{ level_label }}</strong>，今日目标 {{ goal }} 个，已完成 {{ today_learned }} 个。</p>
+</div>
+
+<div class="stat-row">
+    <a href="{{ url_for('wordbook', category='new_today') }}" class="stat-item stat-clickable">
+        <div class="stat-num">{{ new_today }}</div>
+        <div class="stat-label">今日新词</div>
+    </a>
+    <a href="{{ url_for('wordbook', category='review_today') }}" class="stat-item stat-clickable">
+        <div class="stat-num">{{ review_today }}</div>
+        <div class="stat-label">待复习</div>
+    </a>
+    <a href="{{ url_for('wordbook', category='familiar') }}" class="stat-item stat-clickable">
+        <div class="stat-num">{{ familiar }}</div>
+        <div class="stat-label">已熟悉</div>
+    </a>
+    <a href="{{ url_for('wordbook') }}" class="stat-item stat-clickable">
+        <div class="stat-num">{{ total }}</div>
+        <div class="stat-label">词库总量</div>
+    </a>
+</div>
+
+
+<div class="cards">
+    <a href="{{ url_for('wordbook') }}" class="entry-card card-1">
+        <div class="card-icon">书本</div>
+        <h2 class="card-title">我的单词书</h2>
+        <p class="card-desc">浏览词汇本（{{ level_label }}）全部 {{ total }} 个单词，查看每个词的掌握状态</p>
+        <span class="card-link">进入 →</span>
+    </a>
+    <a href="{{ url_for('today') }}" class="entry-card card-2">
+        <div class="card-icon">今日</div>
+        <h2 class="card-title">今日背诵清单</h2>
+        <p class="card-desc">{{ new_today }} 个新词 + {{ review_today }} 个复习词，逐个标记熟记/忘记</p>
+        <span class="card-link">开始 →</span>
+    </a>
+    <a href="{{ url_for('study') }}" class="entry-card card-3">
+        <div class="card-icon">卡片</div>
+        <h2 class="card-title">单词背诵</h2>
+        <p class="card-desc">翻卡式学习，点击翻面看释义，连续答对 {{ user.familiar_threshold or 3 }} 次标记熟悉</p>
+        <span class="card-link">开始 →</span>
+    </a>
+    <a href="{{ url_for('sentences') }}" class="entry-card card-4">
+        <div class="card-icon">句子</div>
+        <h2 class="card-title">句子背诵</h2>
+        <p class="card-desc">手动添加英汉句子，支持给中文背英文或给英文背中文，双向切换</p>
+        <span class="card-link">开始 →</span>
+    </a>
+    <a href="{{ url_for('groups') }}" class="entry-card card-5">
+        <div class="card-icon">分组</div>
+        <h2 class="card-title">我的分组</h2>
+        <p class="card-desc">收藏单词/句子到自定义分组（收藏、一单元、二单元等），按组单独背诵</p>
+        <span class="card-link">进入 →</span>
+    </a>
+
+    <a href="{{ url_for('today_forgotten') }}" class="entry-card card-forgot">
+    <div class="card-icon">忘记</div>
+    <h2 class="card-title">今日忘记</h2>
+    <p class="card-desc">今天点过忘记的单词共 {{ forgotten_count }} 个，可单独背诵巩固哦</p>
+    <span class="card-link">背诵 →</span>
+    </a>
+</div>
+
+{% if vocab_level == 'custom' %}
+<div class="vocab-hint">
+    当前为自选词汇本，<a href="{{ url_for('vocab_custom') }}" class="link-goto">前往管理 →</a>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,272 @@
+{% extends 'base.html' %}
+{% block title %}我的单词书 - 单词背诵{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">我的单词书</h1>
+    <p class="page-sub">当前词汇本：{{ level_label }}，共 {{ rows|length }} 个单词
+        {% if user.vocab_level == 'custom' %}
+        · <a href="{{ url_for('vocab_custom') }}" class="link-goto">管理自选词汇本 →</a>
+        {% endif %}
+    </p>
+</div>
+
+{# 整体进度条 #}
+<div class="vocab-progress-card">
+    <div class="vocab-progress-header">
+        <span class="vocab-progress-title">已熟悉进度</span>
+        <span class="vocab-progress-count">
+            <b>{{ familiar_count }}</b> / {{ total_count }}
+            <span class="vocab-progress-pct">（{{ '%.1f' % (familiar_count * 100.0 / total_count) if total_count else 0 }}%）</span>
+        </span>
+    </div>
+    <div class="vocab-progress-bar">
+        <div class="vocab-progress-fill" style="width: {{ (familiar_count * 100.0 / total_count) if total_count else 0 }}%"></div>
+        {% if learning_count > 0 %}
+        <div class="vocab-progress-learning" style="width: {{ (learning_count * 100.0 / total_count) if total_count else 0 }}%"></div>
+        {% endif %}
+    </div>
+    <div class="vocab-progress-legend">
+        <span class="legend-item"><span class="legend-dot familiar"></span>已熟悉 {{ familiar_count }}</span>
+        <span class="legend-item"><span class="legend-dot learning"></span>学习中 {{ learning_count }}</span>
+        <span class="legend-item"><span class="legend-dot new"></span>未学 {{ total_count - familiar_count - learning_count }}</span>
+    </div>
+</div>
+
+{% if category %}
+<div class="filter-bar">
+    <span class="filter-pill active">
+        {% if category == 'new_today' %}今日新词{% elif category == 'review_today' %}待复习{% elif category == 'familiar' %}已熟悉{% endif %}
+    </span>
+    <a href="{{ url_for('wordbook') }}" class="filter-pill">返回全部</a>
+</div>
+{% else %}
+<div class="filter-bar">
+    <a href="{{ url_for('wordbook', status='all') }}" class="filter-pill {% if current_filter == 'all' %}active{% endif %}">全部</a>
+    <a href="{{ url_for('wordbook', status='new') }}" class="filter-pill {% if current_filter == 'new' %}active{% endif %}">新词</a>
+    <a href="{{ url_for('wordbook', status='learning') }}" class="filter-pill {% if current_filter == 'learning' %}active{% endif %}">学习中</a>
+    <a href="{{ url_for('wordbook', status='familiar') }}" class="filter-pill {% if current_filter == 'familiar' %}active{% endif %}">熟悉</a>
+</div>
+{% endif %}
+
+<div class="col-toggle-bar">
+    <label class="toggle-label"><input type="checkbox" id="toggleEn" checked> 显示英文</label>
+    <label class="toggle-label"><input type="checkbox" id="toggleCn" checked> 显示中文</label>
+    <label class="toggle-label"><input type="checkbox" id="togglePh" checked> 显示音标</label>
+    <div class="batch-actions">
+        <button class="btn-secondary" id="batchTodayBtn">➕ 加入今日</button>
+        <button class="btn-secondary" id="batchGroupBtn">📂 添加分组</button>
+        <span class="batch-hint" id="batchHint" style="display:none;">已选 <b id="selCount">0</b> 项</span>
+    </div>
+</div>
+
+<div class="table-wrap">
+    <table class="word-table" id="wbTable">
+        <thead>
+            <tr>
+                <th class="col-sel"><input type="checkbox" id="selectAll"></th>
+                <th class="col-idx">序号</th>
+                <th class="col-en">单词</th>
+                <th class="col-ph">音标</th>
+                <th class="col-cn">释义</th>
+                <th class="col-status">状态</th>
+                <th class="col-action">操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr data-word-id="{{ r.id }}" data-en="{{ r.english }}" data-cn="{{ r.chinese }}" data-ph="{{ r.phonetic }}">
+                <td class="col-sel"><input type="checkbox" class="row-check" data-word-id="{{ r.id }}"></td>
+                <td class="col-idx">{{ loop.index }}</td>
+                <td class="col-en">{{ r.english }}</td>
+                <td class="col-ph">{{ r.phonetic }}</td>
+                <td class="col-cn">{{ r.chinese }}</td>
+                <td class="col-status">
+                    <span class="badge badge-{{ r.status }}">{{ status_map[r.status] }}</span>
+                    {% if r.progress and r.status != 'familiar' %}
+                    <div class="mini-progress">
+                        <div class="mini-bar"><div class="mini-fill" style="width:{{ (r.progress.consecutive_correct or 0) * (100 // (familiar_threshold or 3)) }}%"></div></div>
+                        <span class="mini-text">{{ r.progress.consecutive_correct or 0 }}/{{ familiar_threshold or 3 }}</span>
+                    </div>
+                    {% elif r.status == 'familiar' %}
+                    <div class="mini-progress">
+                        <span class="mini-done">✓ 已熟悉</span>
+                    </div>
+                    {% endif %}
+                </td>
+                <td class="col-action">
+                    <button class="btn-forget" data-word-id="{{ r.id }}" title="标记忘记，重置进度">忘记</button>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" class="empty">暂无单词</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- 加入分组弹窗 -->
+<div class="group-select-modal" id="groupModal">
+    <div class="group-select-box">
+        <span class="modal-close" id="modalClose">×</span>
+        <h4>选择分组（将选中的 <b id="modalCount">0</b> 个单词加入）</h4>
+        <div class="group-dropdown-wrap" style="margin-bottom:14px;">
+            <select class="group-dropdown" id="groupDropdown">
+                <option value="">-- 选择已有分组 --</option>
+            </select>
+            <button class="btn-primary" id="addToSelectedGroup">加入分组</button>
+        </div>
+        <div class="group-new-row">
+            <input type="text" id="newGroupName" placeholder="新建分组名">
+            <button class="btn-primary" id="createAndAdd">新建并加入</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const FAMILIAR_THRESHOLD = {{ familiar_threshold or 3 }};
+
+// 列显示/隐藏
+function applyColVisibility() {
+    const showEn = document.getElementById('toggleEn').checked;
+    const showCn = document.getElementById('toggleCn').checked;
+    const showPh = document.getElementById('togglePh').checked;
+    document.querySelectorAll('#wbTable .col-en').forEach(el => el.style.display = showEn ? '' : 'none');
+    document.querySelectorAll('#wbTable .col-cn').forEach(el => el.style.display = showCn ? '' : 'none');
+    document.querySelectorAll('#wbTable .col-ph').forEach(el => el.style.display = showPh ? '' : 'none');
+}
+['toggleEn', 'toggleCn', 'togglePh'].forEach(id => {
+    document.getElementById(id).addEventListener('change', applyColVisibility);
+});
+
+// 忘记按钮
+document.querySelectorAll('.btn-forget').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const row = btn.closest('tr');
+        const wordId = btn.dataset.wordId;
+        fetch(`/api/word/${wordId}/forget`, { method: 'POST' })
+            .then(r => r.json())
+            .then(res => {
+                if (res.success) {
+                    const status = row.querySelector('.col-status');
+                    if (status) {
+                        status.innerHTML = `<span class="badge badge-learning">学习中</span>
+                            <div class="mini-progress">
+                                <div class="mini-bar"><div class="mini-fill" style="width:0%"></div></div>
+                                <span class="mini-text">0/${FAMILIAR_THRESHOLD}</span>
+                            </div>`;
+                    }
+                    btn.textContent = '已重置';
+                    btn.disabled = true;
+                    btn.classList.add('done');
+                    showToast('已重置进度');
+                }
+            });
+    });
+});
+
+// ===== 批量选择 =====
+function getSelectedIds() {
+    return Array.from(document.querySelectorAll('.row-check:checked')).map(cb => cb.dataset.wordId);
+}
+function updateSelCount() {
+    const ids = getSelectedIds();
+    document.getElementById('selCount').textContent = ids.length;
+    document.getElementById('batchHint').style.display = ids.length ? '' : 'none';
+    document.getElementById('modalCount').textContent = ids.length;
+}
+document.querySelectorAll('.row-check').forEach(cb => cb.addEventListener('change', updateSelCount));
+document.getElementById('selectAll').addEventListener('change', e => {
+    document.querySelectorAll('.row-check').forEach(cb => { cb.checked = e.target.checked; });
+    updateSelCount();
+});
+
+// 加入今日
+document.getElementById('batchTodayBtn').addEventListener('click', () => {
+    const ids = getSelectedIds();
+    if (!ids.length) { showToast('请先勾选单词', 'error'); return; }
+    const fd = new FormData();
+    fd.append('word_ids', ids.join(','));
+    fetch('{{ url_for("today_add_words") }}', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(res => {
+            if (res.success) { showToast(`已添加 ${res.added} 个单词到今日背诵`); }
+        });
+});
+
+// 添加分组：打开弹窗，加载分组列表到下拉菜单
+document.getElementById('batchGroupBtn').addEventListener('click', () => {
+    const ids = getSelectedIds();
+    if (!ids.length) { showToast('请先勾选单词', 'error'); return; }
+    updateSelCount();
+    const dropdown = document.getElementById('groupDropdown');
+    dropdown.innerHTML = '<option value="">-- 选择已有分组 --</option>';
+    fetch('{{ url_for("user_groups_api") }}')
+        .then(r => r.json())
+        .then(res => {
+            if (res.success && res.groups.length) {
+                res.groups.forEach(g => {
+                    const opt = document.createElement('option');
+                    opt.value = g.id;
+                    opt.textContent = `${g.name}（${ {'word':'单词','sentence':'句子','mixed':'混合'}[g.gtype] }）`;
+                    dropdown.appendChild(opt);
+                });
+            }
+            document.getElementById('groupModal').classList.add('show');
+        });
+});
+
+// 双击下拉菜单选项直接加入
+document.getElementById('groupDropdown').addEventListener('dblclick', () => {
+    const gid = document.getElementById('groupDropdown').value;
+    if (gid) batchAddToGroup(gid);
+});
+
+document.getElementById('addToSelectedGroup').addEventListener('click', () => {
+    const gid = document.getElementById('groupDropdown').value;
+    if (!gid) { showToast('请选择分组', 'error'); return; }
+    batchAddToGroup(gid);
+});
+
+function batchAddToGroup(gid) {
+    const ids = getSelectedIds();
+    let done = 0, fail = 0;
+    Promise.all(ids.map(wid => {
+        const fd = new FormData();
+        fd.append('word_id', wid);
+        fd.append('group_id', gid);
+        return fetch('{{ url_for("group_add_word") }}', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(res => { if (res.success) done++; else fail++; });
+    })).then(() => {
+        showToast(`成功 ${done} 个${fail ? '，失败 ' + fail + ' 个' : ''}`, fail ? 'error' : 'ok');
+        document.getElementById('groupModal').classList.remove('show');
+        document.querySelectorAll('.row-check:checked').forEach(cb => cb.checked = false);
+        updateSelCount();
+    });
+}
+
+document.getElementById('modalClose').addEventListener('click', () => document.getElementById('groupModal').classList.remove('show'));
+document.getElementById('groupModal').addEventListener('click', e => { if (e.target.id === 'groupModal') e.target.classList.remove('show'); });
+
+document.getElementById('createAndAdd').addEventListener('click', () => {
+    const name = document.getElementById('newGroupName').value.trim();
+    if (!name) { showToast('请输入分组名', 'error'); return; }
+    const ids = getSelectedIds();
+    let done = 0;
+    Promise.all(ids.map(wid => {
+        const fd = new FormData();
+        fd.append('word_id', wid);
+        fd.append('new_group', name);
+        return fetch('{{ url_for("group_add_word") }}', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(res => { if (res.success) done++; });
+    })).then(() => {
+        showToast(`已新建分组「${name}」并加入 ${done} 个单词`);
+        document.getElementById('groupModal').classList.remove('show');
+        document.querySelectorAll('.row-check:checked').forEach(cb => cb.checked = false);
+        updateSelCount();
+    });
+});
+</script>
+{% endblock %}

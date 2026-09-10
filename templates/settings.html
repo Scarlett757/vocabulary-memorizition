@@ -1,0 +1,171 @@
+{% extends 'base.html' %}
+{% block title %}规则设置 - 单词背诵{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">规则设置</h1>
+    <p class="page-sub">自定义每日背诵数量、发音与词汇本</p>
+</div>
+
+<div class="settings-card">
+    <form method="post" action="{{ url_for('settings') }}" class="settings-form">
+        <div class="setting-row">
+            <div class="setting-label">
+                <h3>每日目标</h3>
+                <p class="setting-hint">每天从词库中取出多少个新词进行背诵（5 ~ 100）</p>
+            </div>
+            <div class="setting-control">
+                <input type="number" name="daily_goal" min="5" max="100" value="{{ user.daily_goal or 30 }}"
+                    class="num-input">
+                <span class="unit">个/天</span>
+            </div>
+        </div>
+
+        <div class="setting-row">
+            <div class="setting-label">
+                <h3>默认发音</h3>
+                <p class="setting-hint">背诵页面自动播放的口音</p>
+            </div>
+            <div class="setting-control">
+                <label class="radio-label level-opt {{ 'active' if (user.default_accent or 'us') == 'us' }}">
+                    <input type="radio" name="default_accent" value="us" {{ 'checked' if (user.default_accent or 'us'
+                        )=='us' }}> 🇺 美音 (US)
+                </label>
+                <label class="radio-label level-opt {{ 'active' if user.default_accent == 'uk' }}">
+                    <input type="radio" name="default_accent" value="uk" {{ 'checked' if user.default_accent=='uk' }}>
+                    🇬 英音 (UK)
+                </label>
+            </div>
+        </div>
+
+        <div class="setting-row setting-row-level">
+            <div class="setting-label">
+                <h3>词汇本层级</h3>
+                <p class="setting-hint">点击右侧按钮选择背诵词汇范围，选"初中"可展开初一/初二/初三</p>
+            </div>
+            <div class="setting-control">
+                <input type="hidden" name="vocab_level" id="vocabLevelInput" value="{{ user.vocab_level or 'cet4' }}">
+                <button type="button" class="level-trigger" id="levelTrigger">
+                    <span class="level-trigger-label">当前选择：</span>
+                    <span class="level-trigger-value" id="levelTriggerValue">{{ level_labels[user.vocab_level or 'cet4']
+                        if level_labels else '四级' }}</span>
+                    <span class="level-trigger-arrow">▾</span>
+                </button>
+                {% if user.vocab_level == 'custom' %}
+                <p class="setting-hint"><a href="{{ url_for('vocab_custom') }}" class="link-goto">前往管理自选词汇本 →</a></p>
+                {% endif %}
+
+                <!-- 气泡浮层：主层级选项 -->
+                <div class="level-bubble-overlay" id="levelBubbleOverlay" style="display:none;">
+                    <div class="bubble-row">
+                        <button type="button" class="level-bubble" data-level="primary">小学</button>
+                        <button type="button" class="level-bubble" data-level="middle">初中</button>
+                        <button type="button" class="level-bubble" data-level="senior">高中</button>
+                        <button type="button" class="level-bubble" data-level="cet4">四级</button>
+                        <button type="button" class="level-bubble" data-level="cet6">六级</button>
+                        <button type="button" class="level-bubble" data-level="toefl">托福</button>
+                        <button type="button" class="level-bubble" data-level="ielts">雅思</button>
+                        <button type="button" class="level-bubble" data-level="gre">GRE</button>
+                        <button type="button" class="level-bubble" data-level="ky">考研</button>
+                        <button type="button" class="level-bubble" data-level="custom">自选</button>
+                    </div>
+                    <!-- 初中细分气泡：仅在选"初中"时浮现 -->
+                    <div class="bubble-row bubble-sub-row" id="middleSubBubble" style="display:none;">
+                        <span class="bubble-sub-title">初中细分：</span>
+                        <button type="button" class="level-bubble level-bubble-sub" data-level="middle7">初一</button>
+                        <button type="button" class="level-bubble level-bubble-sub" data-level="middle8">初二</button>
+                        <button type="button" class="level-bubble level-bubble-sub" data-level="middle9">初三</button>
+                        <button type="button" class="level-bubble level-bubble-sub" data-level="middle">全部初中</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="setting-row">
+            <div class="setting-label">
+                <h3>熟悉判定</h3>
+                <p class="setting-hint">连续答对多少次后标记为熟悉（2~10），熟悉后 30 天重新出现</p>
+            </div>
+            <div class="setting-control">
+                <input type="number" name="familiar_threshold" min="2" max="10"
+                    value="{{ user.familiar_threshold or 3 }}" class="num-input">
+                <span class="unit">次</span>
+            </div>
+        </div>
+
+        <div class="settings-actions">
+            <button type="submit" class="btn-primary">保存设置</button>
+            <a href="{{ url_for('index') }}" class="btn-ghost">返回</a>
+        </div>
+    </form>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+    // 词汇本层级气泡浮层
+    const LEVEL_LABELS = {
+        primary: '小学', middle: '初中', middle7: '初一', middle8: '初二', middle9: '初三',
+        senior: '高中', cet4: '四级', cet6: '六级', ielts: '雅思', toefl: '托福',
+        gre: 'GRE', ky: '考研', custom: '自选'
+    };
+
+    const levelTrigger = document.getElementById('levelTrigger');
+    const levelBubbleOverlay = document.getElementById('levelBubbleOverlay');
+    const levelTriggerValue = document.getElementById('levelTriggerValue');
+    const vocabLevelInput = document.getElementById('vocabLevelInput');
+    const middleSubBubble = document.getElementById('middleSubBubble');
+
+    // 当前选中值（用于高亮气泡）
+    function currentLevel() { return vocabLevelInput.value || 'cet4'; }
+
+    // 高亮当前选中层级
+    function refreshBubbleActive() {
+        const cur = currentLevel();
+        document.querySelectorAll('.level-bubble').forEach(b => {
+            b.classList.toggle('active', b.dataset.level === cur);
+        });
+        // 若当前是初中或其细分，显示初中细分气泡
+        const showSub = ['middle', 'middle7', 'middle8', 'middle9'].includes(cur);
+        middleSubBubble.style.display = showSub ? '' : 'none';
+    }
+
+    // 切换气泡浮层显示
+    function toggleBubbleOverlay(forceState) {
+        const willShow = forceState !== undefined ? forceState : (levelBubbleOverlay.style.display === 'none');
+        levelBubbleOverlay.style.display = willShow ? '' : 'none';
+        if (willShow) refreshBubbleActive();
+    }
+
+    levelTrigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleBubbleOverlay();
+    });
+
+    // 点击页面其他位置时收起气泡浮层
+    document.addEventListener('click', (e) => {
+        if (!levelBubbleOverlay.contains(e.target) && !levelTrigger.contains(e.target)) {
+            toggleBubbleOverlay(false);
+        }
+    });
+
+    // 选择主层级
+    document.querySelectorAll('.level-bubble[data-level]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const level = btn.dataset.level;
+            vocabLevelInput.value = level;
+            levelTriggerValue.textContent = LEVEL_LABELS[level] || level;
+            // 点初中时只展开细分气泡，不立即收起浮层
+            if (level === 'middle') {
+                middleSubBubble.style.display = '';
+            } else {
+                middleSubBubble.style.display = 'none';
+            }
+            refreshBubbleActive();
+            // 选非初中项时收起浮层；选初中则保留浮层等待用户选细分
+            if (level !== 'middle') {
+                toggleBubbleOverlay(false);
+            }
+        });
+    });
+</script>
+{% endblock %}

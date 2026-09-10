@@ -1,0 +1,532 @@
+{% extends 'base.html' %}
+{% block title %}{{ '今日忘记背诵' if forgotten_mode else '今日背诵' }} - 单词背诵{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">{{ '今日忘记背诵' if forgotten_mode else '今日背诵' }}</h1>
+    <p class="page-sub">
+        {% if forgotten_mode %}
+        共 {{ words|length }} 个今日标记为忘记的单词，逐个重新背诵巩固（点 ✓ 进度 +1/{{ familiar_threshold or 3 }}，点 ✗ 清零）
+        {% else %}
+        共 {{ words|length }} 个单词（{{ goal }} 个新词 + {{ words|length - goal }} 个复习/额外词），逐个标记熟记或忘记
+        {% endif %}
+    </p>
+</div>
+
+{% if not forgotten_mode %}
+<div class="print-bar">
+    <button class="btn-primary" id="addWordsBtn">➕ 添加词汇</button>
+    <button class="btn-secondary" id="printBtn">🖨 打印</button>
+    <button class="btn-secondary" id="downloadImgBtn">📷 下载图片</button>
+    <button class="btn-secondary" id="exportCsvBtn">📊 导出表格</button>
+    <span class="print-hint">每次打印/导出顺序随机</span>
+</div>
+{% else %}
+<div class="print-bar">
+    <button class="btn-secondary" id="printBtn">🖨 打印</button>
+    <button class="btn-secondary" id="downloadImgBtn">📷 下载图片</button>
+    <button class="btn-secondary" id="exportCsvBtn">📊 导出表格</button>
+    <span class="print-hint">每次打印/导出顺序随机</span>
+</div>
+{% endif %}
+
+<div class="col-toggle-bar">
+    <label class="toggle-label"><input type="checkbox" id="toggleEn" checked> 显示英文</label>
+    <label class="toggle-label"><input type="checkbox" id="toggleCn" checked> 显示中文</label>
+    <label class="toggle-label"><input type="checkbox" id="togglePh" checked> 显示音标</label>
+</div>
+
+{% if not forgotten_mode %}
+<div class="today-progress">
+    <div class="progress-bar">
+        <div class="progress-fill" id="progressFill" style="width:0%"></div>
+    </div>
+    <div class="progress-text"><span id="doneCount">{{ today_learned }}</span> / {{ words|length }} 已完成</div>
+</div>
+{% endif %}
+
+{% if not forgotten_mode %}
+<div class="finish-tip" id="finishTip" style="display:none;">
+    今日目标已完成！<a href="{{ url_for('checkpoint') }}" class="link-goto">前往打卡 →</a>
+</div>
+{% endif %}
+
+<div class="today-list" id="todayList">
+    {% for w in words %}
+    {% set p = progress_map.get(w.id) %}
+    <div class="today-row" data-word-id="{{ w.id }}" data-en="{{ w.english }}" data-cn="{{ w.chinese }}"
+        data-ph="{{ w.phonetic or '' }}" data-known="{{ 1 if p and p.is_known_today else 0 }}">
+        <div class="t-idx">{{ loop.index }}</div>
+        <div class="t-word">
+            <div class="t-en">{{ w.english }}</div>
+            <div class="t-ph">{{ w.phonetic or '' }}</div>
+        </div>
+        <div class="t-pron">
+            <button class="pron-mini" data-accent="us" data-word-id="{{ w.id }}" title="美音">US</button>
+            <button class="pron-mini" data-accent="uk" data-word-id="{{ w.id }}" title="英音">UK</button>
+        </div>
+        <div class="t-cn">{{ w.chinese }}</div>
+        <div class="t-mark">
+            <span class="status-text status-{{ p.status if p else 'new' }}">
+                {{ status_map[p.status] if p else '新词' }}
+            </span>
+            <div class="mark-progress">
+                <span class="cc-text">{{ (p.consecutive_correct if p else 0) or 0 }}/{{ familiar_threshold or 3
+                    }}</span>
+            </div>
+            <div class="mark-btns">
+                <button class="mark-btn mark-known {% if p and p.is_known_today %}active{% endif %}" data-result="known"
+                    data-word-id="{{ w.id }}" title="熟记">✓</button>
+                <button
+                    class="mark-btn mark-forgotten {% if p and not p.is_known_today and p.status != 'new' %}active{% endif %}"
+                    data-result="forgotten" data-word-id="{{ w.id }}" title="忘记">✗</button>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="empty-card">今日已无单词，请先导入词库。</div>
+    {% endfor %}
+</div>
+
+{% if not forgotten_mode %}
+<!-- 添加词汇弹窗 -->
+<div class="group-select-modal" id="addWordsModal">
+    <div class="group-select-box" style="width:520px; max-width:90vw;">
+        <span class="modal-close" id="addModalClose">×</span>
+        <h4>添加词汇到今日背诵</h4>
+        <div class="add-tabs">
+            <button class="add-tab active" data-tab="group">从分组选择</button>
+            <button class="add-tab" data-tab="search">从词库搜索</button>
+        </div>
+        <div class="add-tab-content" id="tab-group">
+            <div class="group-select-list" id="addGroupList"></div>
+        </div>
+        <div class="add-tab-content" id="tab-search" style="display:none;">
+            <input type="text" id="addSearchInput" class="search-input" placeholder="搜索单词"
+                style="width:100%;margin-bottom:10px;">
+            <div class="group-select-list" id="addSearchResults" style="max-height:300px;overflow-y:auto;"></div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- 加入分组弹窗 -->
+<div class="group-select-modal" id="groupModal">
+    <div class="group-select-box">
+        <span class="modal-close" id="modalClose">×</span>
+        <h4>选择分组</h4>
+        <div class="group-select-list" id="groupList"></div>
+        <div class="group-new-row">
+            <input type="text" id="newGroupName" placeholder="新建分组名">
+            <button class="btn-primary" id="createAndAdd">新建并加入</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+    // 今日背诵：标记后划掉 + 提示音 + 消失 + 序号重排
+    const TOTAL_COUNT = {{ words| length }};
+    let doneCount = {{ today_learned }};
+    const FAMILIAR_THRESHOLD = {{ familiar_threshold or 3 }};
+    const STATIC_AUDIO = '{{ url_for("static", filename="audio") }}';
+
+    // 今日单词数据（用于打印/导出）
+    const TODAY_WORDS = [
+        {% for w in words %}
+    { english: '{{ w.english }}', chinese: '{{ w.chinese }}', phonetic: '{{ w.phonetic or "" }}' } {% if not loop.last %}, {% endif %}
+    {% endfor %}
+];
+
+    // 随机洗牌
+    function shuffle(arr) {
+        const a = arr.slice();
+        for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [a[i], a[j]] = [a[j], a[i]];
+        }
+        return a;
+    }
+
+    // 生成打印用 HTML（随机顺序，遵循列显示设置）
+    function buildPrintHTML() {
+        const shuffled = shuffle(TODAY_WORDS);
+        const showEn = document.getElementById('toggleEn').checked;
+        const showCn = document.getElementById('toggleCn').checked;
+        const showPh = document.getElementById('togglePh').checked;
+        const heads = ['<th>序号</th>'];
+        if (showEn) heads.push('<th>单词</th>');
+        if (showPh) heads.push('<th>音标</th>');
+        if (showCn) heads.push('<th>释义</th>');
+        heads.push('<th>熟记</th>');
+        const rows = shuffled.map((w, i) => {
+            const tds = [`<td>${i + 1}</td>`];
+            if (showEn) tds.push(`<td>${w.english}</td>`);
+            if (showPh) tds.push(`<td>${w.phonetic}</td>`);
+            if (showCn) tds.push(`<td>${w.chinese}</td>`);
+            tds.push(`<td></td>`);
+            return `<tr>${tds.join('')}</tr>`;
+        }).join('');
+        return `<div style="font-family:sans-serif;padding:20px;">
+        <h2 style="text-align:center;">今日单词表</h2>
+        <p style="text-align:center;color:#888;">${new Date().toLocaleDateString('zh-CN')} 共 ${shuffled.length} 词</p>
+        <table style="border-collapse:collapse;width:100%;font-size:14px;">
+            <thead><tr style="background:#f0f0f0;">${heads.join('')}</tr></thead>
+            <tbody>${rows}</tbody>
+        </table></div>`;
+    }
+
+    // 打印
+    document.getElementById('printBtn').addEventListener('click', () => {
+        const html = buildPrintHTML();
+        const w = window.open('', '_blank');
+        w.document.write(html);
+        w.document.close();
+        w.focus();
+        setTimeout(() => { w.print(); w.close(); }, 300);
+    });
+
+    // 下载图片（用 html2canvas）
+    document.getElementById('downloadImgBtn').addEventListener('click', () => {
+        const container = document.createElement('div');
+        container.style.cssText = 'position:absolute;left:-9999px;top:0;width:800px;background:#fff;padding:20px;';
+        container.innerHTML = buildPrintHTML();
+        document.body.appendChild(container);
+
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+        script.onload = () => {
+            html2canvas(container, { scale: 2 }).then(canvas => {
+                const link = document.createElement('a');
+                link.download = `今日单词_${new Date().toISOString().slice(0, 10)}.png`;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+                document.body.removeChild(container);
+            }).catch(() => {
+                showToast('图片生成失败，请重试', 'error');
+                document.body.removeChild(container);
+            });
+        };
+        document.body.appendChild(script);
+    });
+
+    // 导出 CSV 表格（遵循列显示设置）
+    document.getElementById('exportCsvBtn').addEventListener('click', () => {
+        const shuffled = shuffle(TODAY_WORDS);
+        const showEn = document.getElementById('toggleEn').checked;
+        const showCn = document.getElementById('toggleCn').checked;
+        const showPh = document.getElementById('togglePh').checked;
+        const heads = ['序号'];
+        if (showEn) heads.push('单词');
+        if (showPh) heads.push('音标');
+        if (showCn) heads.push('释义');
+        heads.push('熟记');
+        let csv = '\uFEFF' + heads.join(',') + '\n';
+        shuffled.forEach((w, i) => {
+            const cells = [i + 1];
+            if (showEn) cells.push(w.english);
+            if (showPh) cells.push(w.phonetic);
+            if (showCn) cells.push(`"${w.chinese}"`);
+            cells.push('');
+            csv += cells.join(',') + '\n';
+        });
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.download = `今日单词_${new Date().toISOString().slice(0, 10)}.csv`;
+        link.href = URL.createObjectURL(blob);
+        link.click();
+    });
+
+    // 列显示/隐藏（针对今日列表的非 table 布局）
+    function applyTodayColVisibility() {
+        const showEn = document.getElementById('toggleEn').checked;
+        const showCn = document.getElementById('toggleCn').checked;
+        const showPh = document.getElementById('togglePh').checked;
+        document.querySelectorAll('.today-row .t-en').forEach(el => el.style.display = showEn ? '' : 'none');
+        document.querySelectorAll('.today-row .t-cn').forEach(el => el.style.display = showCn ? '' : 'none');
+        document.querySelectorAll('.today-row .t-ph').forEach(el => el.style.display = showPh ? '' : 'none');
+    }
+    ['toggleEn', 'toggleCn', 'togglePh'].forEach(id => {
+        document.getElementById(id).addEventListener('change', applyTodayColVisibility);
+    });
+
+    // 加入分组弹窗
+    const groupModal = document.getElementById('groupModal');
+    const groupListEl = document.getElementById('groupList');
+    let currentWordId = null;
+
+    function openGroupModal(wordId) {
+        currentWordId = wordId;
+        fetch('{{ url_for("user_groups_api") }}')
+            .then(r => r.json())
+            .then(res => {
+                groupListEl.innerHTML = '';
+                if (res.success && res.groups.length) {
+                    res.groups.forEach(g => {
+                        const div = document.createElement('div');
+                        div.className = 'group-select-item';
+                        var typeMap = { 'word': '单词', 'sentence': '句子', 'mixed': '混合' };
+                        div.textContent = `${g.name} (${typeMap[g.gtype]})`;
+                        div.addEventListener('click', () => addToGroup(g.id));
+                        groupListEl.appendChild(div);
+                    });
+                } else {
+                    groupListEl.innerHTML = '<p class="empty">尚无分组，请在下方新建</p>';
+                }
+                groupModal.classList.add('show');
+            });
+    }
+
+    function addToGroup(gid) {
+        const fd = new FormData();
+        fd.append('word_id', currentWordId);
+        fd.append('group_id', gid);
+        fetch('{{ url_for("group_add_word") }}', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(res => {
+                if (res.success) { groupModal.classList.remove('show'); showToast('已加入分组'); }
+                else showToast(res.message || '加入失败', 'error');
+            });
+    }
+
+    document.getElementById('modalClose').addEventListener('click', () => groupModal.classList.remove('show'));
+    groupModal.addEventListener('click', e => { if (e.target === groupModal) groupModal.classList.remove('show'); });
+
+    document.getElementById('createAndAdd').addEventListener('click', () => {
+        const name = document.getElementById('newGroupName').value.trim();
+        if (!name) { showToast('请输入分组名', 'error'); return; }
+        const fd = new FormData();
+        fd.append('word_id', currentWordId);
+        fd.append('new_group', name);
+        fetch('{{ url_for("group_add_word") }}', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(res => {
+                if (res.success) { groupModal.classList.remove('show'); showToast('已新建分组并加入'); }
+                else showToast(res.message || '失败', 'error');
+            });
+    });
+
+    document.querySelectorAll('.add-group-btn').forEach(btn => {
+        btn.addEventListener('click', () => openGroupModal(btn.dataset.wordId));
+    });
+
+    // 今日背诵发音按钮（按需 TTS）
+    document.querySelectorAll('.pron-mini').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const accent = btn.dataset.accent;
+            const wordId = btn.dataset.wordId;
+            if (!wordId) return;
+            const audio = new Audio(`/api/tts/${accent}/${wordId}`);
+            audio.play().catch(() => { });
+        });
+    });
+
+    // 用 Web Audio API 生成提示音（无需外部音频文件）
+    function playDing() {
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const o = ctx.createOscillator();
+            const g = ctx.createGain();
+            o.connect(g); g.connect(ctx.destination);
+            o.type = 'sine';
+            o.frequency.setValueAtTime(880, ctx.currentTime);
+            o.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.1);
+            g.gain.setValueAtTime(0.25, ctx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+            o.start();
+            o.stop(ctx.currentTime + 0.35);
+        } catch (e) { /* 静默失败：浏览器不支持 */ }
+    }
+
+    const FORGOTTEN_MODE = {{ 'true' if forgotten_mode else 'false' }};
+    let finishToastShown = false;
+    function updateProgress() {
+        // 进度条元素仅在非遗忘模式存在，缺失时跳过更新
+        const fillEl = document.getElementById('progressFill');
+        const doneEl = document.getElementById('doneCount');
+        if (fillEl) {
+            const pct = TOTAL_COUNT > 0 ? Math.min(100, Math.round(doneCount / TOTAL_COUNT * 100)) : 0;
+            fillEl.style.width = pct + '%';
+        }
+        if (doneEl) doneEl.textContent = doneCount;
+        if (doneCount >= TOTAL_COUNT && TOTAL_COUNT > 0) {
+            // 用 toast 一次性提示，不弹 alert，遗忘模式不显示打卡入口
+            if (!finishToastShown) {
+                finishToastShown = true;
+                if (FORGOTTEN_MODE) {
+                    showToast('今日忘记单词已全部重新背完', 'ok');
+                } else {
+                    showToast('今日目标已完成，可前往打卡', 'ok');
+                    const tip = document.getElementById('finishTip');
+                    if (tip) tip.style.display = '';
+                }
+            }
+        }
+    }
+
+    // 重新编号剩余行（点对勾移除某行后序号连续）
+    function renumberRows() {
+        document.querySelectorAll('.today-row .t-idx').forEach((el, i) => {
+            el.textContent = i + 1;
+        });
+    }
+
+    document.querySelectorAll('.mark-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const row = btn.closest('.today-row');
+            const wordId = btn.dataset.wordId;
+            const result = btn.dataset.result;
+            const fd = new FormData();
+            fd.append('result', result);
+            fetch(`/api/word/${wordId}/mark`, { method: 'POST', body: fd })
+                .then(r => r.json())
+                .then(res => {
+                    if (res.success) {
+                        const statusEl = row.querySelector('.status-text');
+                        const map = { new: '新词', learning: '学习中', familiar: '熟悉' };
+                        statusEl.textContent = map[res.status] || res.status;
+                        statusEl.className = `status-text status-${res.status}`;
+                        // 更新连续答对进度显示
+                        const ccEl = row.querySelector('.cc-text');
+                        if (ccEl) ccEl.textContent = `${res.consecutive}/${res.familiar_threshold}`;
+                        row.querySelectorAll('.mark-btn').forEach(b => b.classList.remove('active'));
+                        btn.classList.add('active');
+
+                        if (result === 'known') {
+                            // 划掉动画
+                            row.classList.add('strike');
+                            playDing();
+                            if (row.dataset.known !== '1') {
+                                doneCount += 1;
+                            }
+                            row.dataset.known = '1';
+                            updateProgress();
+                            // 达到熟悉阈值时浮现 toast 自动隐去（不弹 alert）
+                            if (res.status === 'familiar') {
+                                showToast(`✓ ${row.dataset.en} 已熟悉，${res.next_review_at || '30 天后'} 重新出现`, 'ok');
+                            }
+                            row.querySelectorAll('.mark-btn').forEach(b => b.disabled = true);
+                            // 700ms 划掉动画结束后淡出并移除该行
+                            setTimeout(() => {
+                                row.style.transition = 'opacity .25s ease';
+                                row.style.opacity = '0';
+                                setTimeout(() => {
+                                    row.remove();
+                                    renumberRows();
+                                }, 250);
+                            }, 700);
+                        } else {
+                            // 忘记：如果之前是熟记状态，回退计数+取消完成标记
+                            if (row.dataset.known === '1') {
+                                doneCount = Math.max(0, doneCount - 1);
+                                row.dataset.known = '0';
+                                updateProgress();
+                            }
+                            row.classList.remove('strike', 'completed');
+                            row.querySelectorAll('.mark-btn').forEach(b => b.disabled = false);
+                            // 熟练进度显示清零
+                            const ccEl2 = row.querySelector('.cc-text');
+                            if (ccEl2) ccEl2.textContent = `${res.consecutive}/${res.familiar_threshold}`;
+                        }
+                    }
+                })
+                .catch(() => { /* 网络错误静默：不弹窗 */ });
+        });
+    });
+
+    updateProgress();
+
+    // ===== 添加词汇弹窗（仅今日背诵模式，遗忘模式不渲染） =====
+    const addWordsBtnEl = document.getElementById('addWordsBtn');
+    if (addWordsBtnEl) {
+        const addWordsModal = document.getElementById('addWordsModal');
+        const addGroupList = document.getElementById('addGroupList');
+        const addSearchInput = document.getElementById('addSearchInput');
+        const addSearchResults = document.getElementById('addSearchResults');
+
+        addWordsBtnEl.addEventListener('click', () => {
+            // 加载分组列表
+            fetch('{{ url_for("user_groups_api") }}')
+                .then(r => r.json())
+                .then(res => {
+                    addGroupList.innerHTML = '';
+                    if (res.success && res.groups.length) {
+                        res.groups.forEach(g => {
+                            const div = document.createElement('div');
+                            div.className = 'group-select-item';
+                            var typeMap = { 'word': '单词', 'sentence': '句子', 'mixed': '混合' };
+                            div.innerHTML = `<strong>${g.name}</strong> <span style="color:var(--muted);font-size:12px;">(${typeMap[g.gtype]})</span>`;
+                            div.addEventListener('click', () => {
+                                fetch(`/api/today/add_group/${g.id}`, { method: 'POST' })
+                                    .then(r => r.json())
+                                    .then(res => {
+                                        if (res.success) {
+                                            showToast(`已添加 ${res.added} 个单词到今日背诵`);
+                                            addWordsModal.classList.remove('show');
+                                            location.reload();
+                                        }
+                                    });
+                            });
+                            addGroupList.appendChild(div);
+                        });
+                    } else {
+                        addGroupList.innerHTML = '<p class="empty">尚无分组，请先创建分组</p>';
+                    }
+                    addWordsModal.classList.add('show');
+                });
+        });
+
+        document.getElementById('addModalClose').addEventListener('click', () => addWordsModal.classList.remove('show'));
+        addWordsModal.addEventListener('click', e => { if (e.target === addWordsModal) addWordsModal.classList.remove('show'); });
+
+        // tabs 切换
+        document.querySelectorAll('.add-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.add-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                const target = tab.dataset.tab;
+                document.getElementById('tab-group').style.display = target === 'group' ? '' : 'none';
+                document.getElementById('tab-search').style.display = target === 'search' ? '' : 'none';
+            });
+        });
+
+        // 搜索词库添加
+        let searchTimer = null;
+        addSearchInput.addEventListener('input', () => {
+            clearTimeout(searchTimer);
+            const q = addSearchInput.value.trim();
+            if (!q) { addSearchResults.innerHTML = ''; return; }
+            searchTimer = setTimeout(() => {
+                fetch(`{{ url_for("vocab_search") }}?q=${encodeURIComponent(q)}`)
+                    .then(r => r.json())
+                    .then(res => {
+                        addSearchResults.innerHTML = '';
+                        if (res.success && res.results.length) {
+                            res.results.forEach(w => {
+                                const div = document.createElement('div');
+                                div.className = 'add-search-item';
+                                div.innerHTML = `<span class="as-en">${w.english}</span><span class="as-cn">${w.chinese.slice(0, 30)}</span><button class="as-add-btn" data-wid="${w.id}">加入</button>`;
+                                div.querySelector('.as-add-btn').addEventListener('click', () => {
+                                    const fd = new FormData();
+                                    fd.append('word_ids', w.id);
+                                    fetch('{{ url_for("today_add_words") }}', { method: 'POST', body: fd })
+                                        .then(r => r.json())
+                                        .then(res => {
+                                            if (res.success) {
+                                                const btn = div.querySelector('.as-add-btn');
+                                                btn.textContent = '已加入';
+                                                btn.classList.add('added');
+                                                btn.disabled = true;
+                                            }
+                                        });
+                                });
+                                addSearchResults.appendChild(div);
+                            });
+                        } else {
+                            addSearchResults.innerHTML = '<p class="empty">未找到</p>';
+                        }
+                    });
+            }, 300);
+        });
+    }
+</script>
+{% endblock %}

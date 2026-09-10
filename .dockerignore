@@ -1,0 +1,35 @@
+# 版本控制
+.git
+.gitignore
+
+# 凭据（绝不进镜像）
+.env
+
+# 本地数据库 / 临时文件
+*.db
+dev.db
+*.sqlite
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 测试 / 临时脚本
+_test_*.py
+test_*.py
+
+# IDE
+.vscode/
+.idea/
+
+# 文档（按需保留）
+*.md
+
+# 日志
+*.log
+logs/
+
+# 容器内不需要
+Dockerfile
+docker-compose*.yml
+.dockerignore

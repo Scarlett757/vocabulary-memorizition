@@ -1,0 +1,26 @@
+# 凭据（绝不进 git）
+.env
+
+# 本地数据库
+*.db
+dev.db
+*.sqlite
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# 日志
+*.log
+logs/
+
+# 临时测试脚本
+_test_*.py
+test_*.py

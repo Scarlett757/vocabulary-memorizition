@@ -1,0 +1,242 @@
+{% extends 'base.html' %}
+{% block title %}{{ group.name }} - 我的分组{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">{{ group.name }}</h1>
+    <p class="page-sub">共 {{ rows|length }} 项（{% if group.gtype=='word' %}单词{% elif group.gtype=='sentence' %}句子{% else %}混合{% endif %}）</p>
+</div>
+
+<div class="group-detail-actions">
+    {% if rows %}
+    <a href="{{ url_for('group_study', gid=group.id) }}" class="btn-primary">开始背诵 →</a>
+    <a href="{{ url_for('group_study', gid=group.id, checkin_target=1) }}" class="btn-secondary"
+       style="background:var(--accent-soft); color:var(--accent-2); border-color:var(--accent);">🎯 背完打卡</a>
+    {% endif %}
+    <button class="btn-secondary" id="printBtn">🖨 打印</button>
+    <button class="btn-secondary" id="downloadImgBtn">📷 下载图片</button>
+    <button class="btn-secondary" id="exportCsvBtn">📊 导出表格</button>
+    <span class="print-hint">每次打印/导出顺序随机</span>
+</div>
+
+<div class="col-toggle-bar">
+    <label class="toggle-label"><input type="checkbox" id="toggleEn" checked> 显示英文</label>
+    <label class="toggle-label"><input type="checkbox" id="toggleCn" checked> 显示中文</label>
+    <label class="toggle-label"><input type="checkbox" id="togglePh" checked> 显示音标</label>
+    <span class="toggle-divider"></span>
+    <span class="batch-hint" id="batchHint" style="display:none;">已选 <b id="selCount">0</b> 项</span>
+    <button class="btn-secondary" id="batchRemoveBtn" style="background:var(--bad-bg); color:var(--bad); border-color:var(--bad);">🗑 移出分组</button>
+</div>
+
+<div class="table-wrap">
+    <table class="word-table" id="groupTable">
+        <thead>
+            <tr>
+                <th class="col-sel"><input type="checkbox" id="selectAll"></th>
+                <th class="col-idx">序号</th>
+                <th class="col-en">英文</th>
+                <th class="col-ph">音标</th>
+                <th class="col-cn">中文</th>
+                <th class="col-status">状态</th>
+                <th class="col-action">操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr data-id="{{ r.id }}" data-word-id="{{ r.word_id }}" data-kind="{{ r.kind }}"
+                data-en="{{ r.english }}" data-cn="{{ r.chinese }}" data-ph="{{ r.phonetic }}">
+                <td class="col-sel"><input type="checkbox" class="row-check" data-id="{{ r.id }}" data-kind="{{ r.kind }}" data-word-id="{{ r.word_id }}"></td>
+                <td class="col-idx">{{ loop.index }}</td>
+                <td class="col-en">{{ r.english }}</td>
+                <td class="col-ph">{{ r.phonetic }}</td>
+                <td class="col-cn">{{ r.chinese }}</td>
+                <td class="col-status">
+                    <span class="badge badge-{{ r.status }}">{{ status_map[r.status] }}</span>
+                    <span class="mini-text">{{ r.consecutive }}/{{ familiar_threshold or 3 }}</span>
+                </td>
+                <td class="col-action">
+                    {% if r.kind == 'word' %}
+                    <button class="btn-forget" data-word-id="{{ r.word_id }}" title="标记忘记，重置进度">忘记</button>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" class="empty">{{ empty_msg or '分组为空，请先添加单词或句子' }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const FAMILIAR_THRESHOLD = {{ familiar_threshold or 3 }};
+// 列显示/隐藏
+function applyColVisibility() {
+    const showEn = document.getElementById('toggleEn').checked;
+    const showCn = document.getElementById('toggleCn').checked;
+    const showPh = document.getElementById('togglePh').checked;
+    document.querySelectorAll('#groupTable .col-en').forEach(el => el.style.display = showEn ? '' : 'none');
+    document.querySelectorAll('#groupTable .col-cn').forEach(el => el.style.display = showCn ? '' : 'none');
+    document.querySelectorAll('#groupTable .col-ph').forEach(el => el.style.display = showPh ? '' : 'none');
+}
+['toggleEn', 'toggleCn', 'togglePh'].forEach(id => {
+    document.getElementById(id).addEventListener('change', applyColVisibility);
+});
+
+// 收集当前可见数据（用于随机打印/导出）
+function collectVisible() {
+    const showEn = document.getElementById('toggleEn').checked;
+    const showCn = document.getElementById('toggleCn').checked;
+    const showPh = document.getElementById('togglePh').checked;
+    const rows = [];
+    document.querySelectorAll('#groupTable tbody tr[data-en]').forEach(tr => {
+        rows.push({
+            english: showEn ? tr.dataset.en : '',
+            chinese: showCn ? tr.dataset.cn : '',
+            phonetic: showPh ? tr.dataset.ph : '',
+        });
+    });
+    return rows;
+}
+
+function shuffle(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+}
+
+function buildPrintHTML() {
+    const data = shuffle(collectVisible());
+    const cols = [];
+    if (document.getElementById('toggleEn').checked) cols.push('<th>英文</th>');
+    if (document.getElementById('togglePh').checked) cols.push('<th>音标</th>');
+    if (document.getElementById('toggleCn').checked) cols.push('<th>中文</th>');
+    const body = data.map((w, i) => {
+        const tds = [];
+        if (document.getElementById('toggleEn').checked) tds.push(`<td>${w.english}</td>`);
+        if (document.getElementById('togglePh').checked) tds.push(`<td>${w.phonetic}</td>`);
+        if (document.getElementById('toggleCn').checked) tds.push(`<td>${w.chinese}</td>`);
+        return `<tr><td>${i+1}</td>${tds.join('')}</tr>`;
+    }).join('');
+    return `<div style="font-family:sans-serif;padding:20px;">
+        <h2 style="text-align:center;">{{ group.name }}</h2>
+        <p style="text-align:center;color:#888;">${new Date().toLocaleDateString('zh-CN')} 共 ${data.length} 项</p>
+        <table style="border-collapse:collapse;width:100%;font-size:14px;">
+            <thead><tr style="background:#f0f0f0;"><th>序号</th>${cols.join('')}</tr></thead>
+            <tbody>${body}</tbody>
+        </table></div>`;
+}
+
+document.getElementById('printBtn').addEventListener('click', () => {
+    const w = window.open('', '_blank');
+    w.document.write(buildPrintHTML());
+    w.document.close();
+    w.focus();
+    setTimeout(() => { w.print(); w.close(); }, 300);
+});
+
+document.getElementById('downloadImgBtn').addEventListener('click', () => {
+    const container = document.createElement('div');
+    container.style.cssText = 'position:absolute;left:-9999px;top:0;width:800px;background:#fff;padding:20px;';
+    container.innerHTML = buildPrintHTML();
+    document.body.appendChild(container);
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+    script.onload = () => {
+        html2canvas(container, { scale: 2 }).then(canvas => {
+            const link = document.createElement('a');
+            link.download = `{{ group.name }}_${new Date().toISOString().slice(0,10)}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            document.body.removeChild(container);
+        }).catch(() => { showToast('图片生成失败', 'error'); document.body.removeChild(container); });
+    };
+    document.body.appendChild(script);
+});
+
+document.getElementById('exportCsvBtn').addEventListener('click', () => {
+    const data = shuffle(collectVisible());
+    const showEn = document.getElementById('toggleEn').checked;
+    const showCn = document.getElementById('toggleCn').checked;
+    const showPh = document.getElementById('togglePh').checked;
+    const heads = ['序号'];
+    if (showEn) heads.push('英文');
+    if (showPh) heads.push('音标');
+    if (showCn) heads.push('中文');
+    let csv = '\uFEFF' + heads.join(',') + '\n';
+    data.forEach((w, i) => {
+        const cells = [i+1];
+        if (showEn) cells.push(w.english);
+        if (showPh) cells.push(w.phonetic);
+        if (showCn) cells.push(`"${w.chinese}"`);
+        csv += cells.join(',') + '\n';
+    });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.download = `{{ group.name }}_${new Date().toISOString().slice(0,10)}.csv`;
+    link.href = URL.createObjectURL(blob);
+    link.click();
+});
+
+// 批量移出分组：先勾选行，再点"移出分组"
+function getSelectedItems() {
+    return Array.from(document.querySelectorAll('.row-check:checked')).map(cb => ({
+        id: cb.dataset.id,
+        tr: cb.closest('tr')
+    }));
+}
+function updateSelCount() {
+    const items = getSelectedItems();
+    document.getElementById('selCount').textContent = items.length;
+    document.getElementById('batchHint').style.display = items.length ? '' : 'none';
+}
+document.querySelectorAll('.row-check').forEach(cb => cb.addEventListener('change', updateSelCount));
+document.getElementById('selectAll').addEventListener('change', e => {
+    document.querySelectorAll('.row-check').forEach(cb => { cb.checked = e.target.checked; });
+    updateSelCount();
+});
+
+document.getElementById('batchRemoveBtn').addEventListener('click', () => {
+    const items = getSelectedItems();
+    if (!items.length) { showToast('请先勾选要移出的项', 'error'); return; }
+    let done = 0;
+    Promise.all(items.map(it => {
+        return fetch(`/groups/{{ group.id }}/remove_item/${it.id}`, { method: 'POST' })
+            .then(r => r.json())
+            .then(res => { if (res.success) { done++; it.tr.remove(); } });
+    })).then(() => {
+        // 重新编号
+        document.querySelectorAll('#groupTable tbody tr').forEach((tr, i) => {
+            const idxCell = tr.querySelector('.col-idx');
+            if (idxCell) idxCell.textContent = i + 1;
+        });
+        document.getElementById('selectAll').checked = false;
+        updateSelCount();
+        showToast(`已移出 ${done} 项`);
+    });
+});
+
+// 忘记按钮（重置进度）
+document.querySelectorAll('.btn-forget').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const wordId = btn.dataset.wordId;
+        const row = btn.closest('tr');
+        fetch(`/api/word/${wordId}/forget`, { method: 'POST' })
+            .then(r => r.json())
+            .then(res => {
+                if (res.success) {
+                    const status = row.querySelector('.col-status');
+                    if (status) {
+                        status.innerHTML = `<span class="badge badge-learning">学习中</span> <span class="mini-text">0/${FAMILIAR_THRESHOLD}</span>`;
+                    }
+                    btn.textContent = '已重置';
+                    btn.disabled = true;
+                    btn.classList.add('done');
+                }
+            });
+    });
+});
+</script>
+{% endblock %}

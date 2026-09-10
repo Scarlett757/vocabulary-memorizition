@@ -1,0 +1,253 @@
+{% extends 'base.html' %}
+{% block title %}单个单词背诵 - 单词背诵{% endblock %}
+{% block content %}
+<div class="study-wrap">
+    {% if not words|length %}
+    {# 今日背诵列表为空：提示去添加单词 #}
+    <div class="study-empty-card">
+        <div class="study-empty-icon">📭</div>
+        <h2 class="study-empty-title">今日背诵列表为空</h2>
+        <p class="study-empty-sub">所有今天的单词已背完，或你还没添加单词</p>
+        <a href="{{ url_for('today') }}" class="btn-primary">去今日背诵添加单词 →</a>
+    </div>
+    {% else %}
+    <div class="study-meta">
+        <span id="studyCount">第 1 / {{ words|length }} 个</span>
+        {% if group_name %}<span class="study-streak">📚 {{ group_name }}</span>{% endif %}
+        <span id="studyStreak" class="study-streak"></span>
+    </div>
+
+    <div class="study-progress">
+        <div class="progress-bar"><div class="progress-fill" id="studyProgressFill" style="width:0%"></div></div>
+        <div class="progress-text">今日已背 <span id="studyLearned">{{ today_learned }}</span> 个</div>
+    </div>
+
+    <div class="card-stage">
+        <div class="flip-card" id="flipCard">
+            <div class="flip-face flip-front">
+                <div class="flip-phonetic" id="cardPhonetic"></div>
+                <div class="flip-english" id="cardEnglish"></div>
+                <div class="flip-hint">点击卡片或下方按钮翻面查看释义</div>
+            </div>
+            <div class="flip-face flip-back">
+                <div class="flip-english-small" id="cardEnglishBack"></div>
+                <div class="flip-chinese" id="cardChinese"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="pron-bar">
+        <button class="pron-btn" id="pronUS" title="美音">
+            <span class="pron-flag">US</span> 🔊
+        </button>
+        <button class="pron-btn" id="pronUK" title="英音">
+            <span class="pron-flag">UK</span> 🔊
+        </button>
+        <span class="pron-hint">点击 US/UK 播放发音</span>
+    </div>
+
+    <div class="study-actions">
+        <button class="btn-secondary" id="flipBtn">翻面</button>
+        <button class="mark-btn mark-forgotten" id="forgotBtn" title="忘记">✗</button>
+        <button class="mark-btn mark-known" id="knownBtn" title="熟记">✓</button>
+    </div>
+
+    <div class="study-nav">
+        <button class="btn-ghost" id="prevBtn">上一个</button>
+        <button class="btn-ghost" id="nextBtn">下一个</button>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const RAW_WORDS = {{ words | tojson }};
+const GOAL = {{ goal }};
+const TODAY_LEARNED = {{ today_learned }};
+const CONTINUE_MODE = {{ 'true' if continue_mode else 'false' }};
+const STATIC_AUDIO = '{{ url_for("static", filename="audio") }}';
+const FAMILIAR_THRESHOLD = {{ familiar_threshold or 3 }};
+// 分组打卡目标：完成后跳转到打卡界面（携带 group_id）
+const GROUP_ID = {{ group_id or 'null' }};
+
+// 随机洗牌单词顺序（每次进入页面顺序不同）
+function shuffle(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+}
+const WORDS = shuffle(RAW_WORDS);
+
+let idx = 0;
+let flipped = false;
+let accent = '{{ default_accent }}'; // 用户设置的默认口音
+
+// 背诵逻辑：本轮中第一次点 ✗ 的单词会被推到本轮末尾，必须全部点过 ✓ 才算完成
+const deferredIds = new Set();   // 本轮已点过 ✗ 的 word_id 集合
+let finishedCount = 0;           // 本轮已成功点过 ✓ 的单词数
+let todayLearnedNow = TODAY_LEARNED;
+
+// 翻页提示音（Web Audio API 生成短促"叮"声）
+function playFlipSound() {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.type = 'triangle';
+        o.frequency.setValueAtTime(660, ctx.currentTime);
+        o.frequency.exponentialRampToValueAtTime(990, ctx.currentTime + 0.08);
+        g.gain.setValueAtTime(0.2, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+        o.start();
+        o.stop(ctx.currentTime + 0.3);
+    } catch (e) { /* 静默 */ }
+}
+
+// 播放单词发音（按需 TTS：本地无音频时后端实时生成）
+function playPron(acc) {
+    const w = WORDS[idx];
+    if (!w || !w.id) return;
+    const url = `/api/tts/${acc}/${w.id}`;
+    const audio = new Audio(url);
+    audio.play().catch(() => {/* 静默失败 */});
+}
+
+function render() {
+    // 今日无单词时直接返回，不访问空数组
+    if (WORDS.length === 0) return;
+    if (idx < 0) idx = 0;
+    if (idx >= WORDS.length) idx = WORDS.length - 1;
+    const w = WORDS[idx];
+    document.getElementById('cardEnglish').textContent = w.english;
+    document.getElementById('cardEnglishBack').textContent = w.english;
+    document.getElementById('cardPhonetic').textContent = w.phonetic || '';
+    document.getElementById('cardChinese').textContent = w.chinese;
+    document.getElementById('studyCount').textContent = `第 ${idx+1} / ${WORDS.length} 个`;
+    document.getElementById('studyStreak').textContent = '';
+    flipBack();
+    playFlipSound(); // 翻页提示音
+    setTimeout(() => playPron(accent), 350);
+    updateStudyProgress();
+}
+
+function updateStudyProgress() {
+    if (WORDS.length === 0) return;
+    const pct = Math.min(100, Math.round((idx + 1) / WORDS.length * 100));
+    document.getElementById('studyProgressFill').style.width = pct + '%';
+}
+
+function flipBack() {
+    flipped = false;
+    const c = document.getElementById('flipCard');
+    if (c) c.classList.remove('flipped');
+}
+
+function flip() {
+    flipped = true;
+    const c = document.getElementById('flipCard');
+    if (c) c.classList.add('flipped');
+}
+
+const flipCardEl = document.getElementById('flipCard');
+if (flipCardEl) flipCardEl.addEventListener('click', flip);
+const flipBtnEl = document.getElementById('flipBtn');
+if (flipBtnEl) flipBtnEl.addEventListener('click', flip);
+const prevBtnEl = document.getElementById('prevBtn');
+if (prevBtnEl) prevBtnEl.addEventListener('click', () => { if (idx > 0) { idx--; render(); } });
+
+const nextBtnEl = document.getElementById('nextBtn');
+if (nextBtnEl) nextBtnEl.addEventListener('click', () => {
+    if (idx < WORDS.length - 1) { idx++; render(); }
+    else { goCheckpoint(); }
+});
+
+function goCheckpoint() {
+    if (CONTINUE_MODE) {
+        window.location.href = '{{ url_for("today") }}';
+    } else if (GROUP_ID) {
+        // 分组打卡：跳转到打卡界面，附带 group_id
+        window.location.href = `{{ url_for("checkpoint") }}?group_id=${GROUP_ID}`;
+    } else {
+        window.location.href = '{{ url_for("checkpoint") }}';
+    }
+}
+
+// 找到下一个未点过 ✓ 的条目
+function nextUnfinished() {
+    if (WORDS.length === 0) return -1;
+    if (finishedCount >= WORDS.length) return -1;
+    let next = idx + 1;
+    while (next < WORDS.length && deferredIds.has(WORDS[next].id)) next++;
+    if (next < WORDS.length) return next;
+    next = 0;
+    while (next <= idx && deferredIds.has(WORDS[next].id)) next++;
+    return next <= idx ? next : -1;
+}
+
+function mark(result) {
+    const w = WORDS[idx];
+    if (!w) return;
+    const fd = new FormData();
+    fd.append('result', result);
+    fetch(`/api/word/${w.id}/mark`, { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(res => {
+            if (res.success) {
+                const streak = `连续答对 ${res.consecutive}/${res.familiar_threshold}`;
+                document.getElementById('studyStreak').textContent = streak;
+                if (result === 'known') {
+                    // 熟记时更新今日已背数
+                    const el = document.getElementById('studyLearned');
+                    el.textContent = (parseInt(el.textContent, 10) || 0) + 1;
+                    todayLearnedNow++;
+                    if (!deferredIds.has(w.id)) {
+                        finishedCount++;
+                    } else {
+                        deferredIds.delete(w.id);
+                        finishedCount++;
+                    }
+                    if (res.status === 'familiar') {
+                        document.getElementById('studyStreak').textContent = `✓ 已熟悉（${res.next_review_at} 重新出现）`;
+                    }
+                } else {
+                    // 第一次点 ✗：推到本轮末尾
+                    if (!deferredIds.has(w.id)) {
+                        deferredIds.add(w.id);
+                        showToast('已放入本轮末尾，稍后再来', 'info');
+                    }
+                }
+                setTimeout(() => {
+                    // 检查是否完成本轮
+                    if (finishedCount >= WORDS.length) {
+                        showToast('全部单词背诵完成！', 'ok');
+                        setTimeout(() => goCheckpoint(), 1200);
+                        return;
+                    }
+                    const next = nextUnfinished();
+                    if (next >= 0) { idx = next; render(); }
+                    else {
+                        showToast('全部单词背诵完成！', 'ok');
+                        setTimeout(() => goCheckpoint(), 1200);
+                    }
+                }, 600);
+            }
+        })
+        .catch(() => { /* 网络错误静默：不弹窗 */ });
+}
+
+const knownBtnEl = document.getElementById('knownBtn');
+if (knownBtnEl) knownBtnEl.addEventListener('click', () => mark('known'));
+const forgotBtnEl = document.getElementById('forgotBtn');
+if (forgotBtnEl) forgotBtnEl.addEventListener('click', () => mark('forgotten'));
+const pronUSEl = document.getElementById('pronUS');
+if (pronUSEl) pronUSEl.addEventListener('click', () => { accent = 'us'; playPron('us'); });
+const pronUKEl = document.getElementById('pronUK');
+if (pronUKEl) pronUKEl.addEventListener('click', () => { accent = 'uk'; playPron('uk'); });
+
+render();
+</script>
+{% endblock %}

@@ -1,0 +1,156 @@
+{% extends 'base.html' %}
+{% block title %}{% if mode == 'register' %}注册{% else %}登录{% endif %} - 单词背诵{% endblock %}
+{% block content %}
+<div class="auth-wrap">
+    <div class="auth-card">
+        <div class="auth-tabs">
+            <a href="{{ url_for('login') }}" class="auth-tab {% if mode != 'register' %}active{% endif %}">登录</a>
+            <a href="{{ url_for('register') }}" class="auth-tab {% if mode == 'register' %}active{% endif %}">注册</a>
+        </div>
+
+        {% if mode == 'register' %}
+        <form method="post" action="{{ url_for('register') }}" class="auth-form" id="registerForm">
+            <h1 class="auth-title">创建账户</h1>
+            <p class="auth-sub">邮箱验证码注册，用户名默认为脱敏手机号</p>
+
+            <label class="field">
+                <span class="field-label">邮箱</span>
+                <input type="email" name="email" required placeholder="you@example.com" value="{{ request.form.email }}">
+            </label>
+
+            <label class="field">
+                <span class="field-label">手机号</span>
+                <input type="tel" name="phone" required placeholder="11 位手机号" value="{{ request.form.phone }}">
+            </label>
+
+            <div class="field field-code">
+                <div class="code-input">
+                    <span class="field-label">验证码</span>
+                    <input type="text" name="code" required maxlength="6" placeholder="6 位验证码">
+                </div>
+                <button type="button" class="btn-code" id="sendCodeBtn" data-purpose="register">发送验证码</button>
+            </div>
+
+            <label class="field">
+                <span class="field-label">密码 <em>(可选，不设则仅支持验证码登录)</em></span>
+                <input type="password" name="password" placeholder="留空则不设置">
+            </label>
+
+            <button type="submit" class="btn-primary btn-block">注册</button>
+        </form>
+        {% else %}
+        <div class="login-modes">
+            <button class="mode-switch active" data-mode="password">账号密码</button>
+            <button class="mode-switch" data-mode="code">邮箱验证码</button>
+        </div>
+
+        <form method="post" action="{{ url_for('login') }}" class="auth-form" id="loginForm">
+            <input type="hidden" name="login_mode" id="loginMode" value="password">
+
+            <div class="login-pane" data-pane="password">
+                <h1 class="auth-title">欢迎回来</h1>
+                <p class="auth-sub">账号可为 用户名 / 邮箱 / 手机号</p>
+                <label class="field">
+                    <span class="field-label">账号</span>
+                    <input type="text" name="account" required placeholder="用户名 / 邮箱 / 手机号" value="{{ request.form.account }}">
+                </label>
+                <label class="field">
+                    <span class="field-label">密码</span>
+                    <input type="password" name="password" required placeholder="密码">
+                </label>
+                <button type="submit" class="btn-primary btn-block">登录</button>
+            </div>
+
+            <div class="login-pane" data-pane="code" style="display:none;">
+                <h1 class="auth-title">验证码登录</h1>
+                <p class="auth-sub">输入邮箱获取验证码即可登录</p>
+                <label class="field">
+                    <span class="field-label">邮箱</span>
+                    <input type="email" name="email" required placeholder="you@example.com">
+                </label>
+                <div class="field field-code">
+                    <div class="code-input">
+                        <span class="field-label">验证码</span>
+                        <input type="text" name="code" maxlength="6" placeholder="6 位验证码">
+                    </div>
+                    <button type="button" class="btn-code" id="sendCodeBtnLogin" data-purpose="login">发送验证码</button>
+                </div>
+                <button type="submit" class="btn-primary btn-block">登录</button>
+            </div>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+// 登录方式切换：切换时控制 required 与 disabled，避免隐藏 pane 的 required 阻止提交
+function syncPanes(activeMode) {
+    document.querySelectorAll('.login-pane').forEach(p => {
+        const isCurrent = p.dataset.pane === activeMode;
+        p.style.display = isCurrent ? '' : 'none';
+        // 隐藏的 pane 里所有 input 禁用（不提交、不验证 required）
+        p.querySelectorAll('input').forEach(inp => { inp.disabled = !isCurrent; });
+    });
+}
+document.querySelectorAll('.mode-switch').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.mode-switch').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const m = btn.dataset.mode;
+        document.getElementById('loginMode').value = m;
+        syncPanes(m);
+    });
+});
+// 初始化：默认 password 模式，禁用 code pane 的 input
+syncPanes('password');
+
+// 发送验证码（注册与登录共用逻辑）
+function bindSendCode(btnId) {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+        const form = btn.closest('form');
+        const emailInput = form.querySelector('input[name="email"]');
+        const email = emailInput ? emailInput.value.trim() : '';
+        if (!email) { showToast('请先填写邮箱', 'error'); emailInput.focus(); return; }
+        const purpose = btn.dataset.purpose;
+        const fd = new FormData();
+        fd.append('email', email);
+        fd.append('purpose', purpose);
+        btn.disabled = true;
+        fetch('{{ url_for("send_code") }}', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(res => {
+                if (res.dev_code) {
+                    showToast(res.message, 'info'); // 开发模式直接显示验证码
+                } else if (res.success) {
+                    showToast('验证码已发送，请查收邮箱', 'ok');
+                } else {
+                    showToast(res.message || '发送失败', 'error');
+                    btn.disabled = false;
+                    return;
+                }
+                let left = 60;
+                btn.textContent = `${left}s 后重发`;
+                const timer = setInterval(() => {
+                    left -= 1;
+                    if (left <= 0) {
+                        clearInterval(timer);
+                        btn.textContent = '发送验证码';
+                        btn.disabled = false;
+                    } else {
+                        btn.textContent = `${left}s 后重发`;
+                    }
+                }, 1000);
+            })
+            .catch(() => {
+                showToast('网络错误，请稍后重试', 'error');
+                btn.disabled = false;
+            });
+    });
+}
+bindSendCode('sendCodeBtn');
+bindSendCode('sendCodeBtnLogin');
+</script>
+{% endblock %}

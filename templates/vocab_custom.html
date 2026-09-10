@@ -1,0 +1,135 @@
+{% extends 'base.html' %}
+{% block title %}自选词汇本 - 单词背诵{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">自选词汇本</h1>
+    <p class="page-sub">从词库搜索单词加入自选本，或手动添加新词</p>
+</div>
+
+<div class="custom-panel">
+    <div class="custom-block">
+        <h3 class="block-title">搜索词库添加</h3>
+        <div class="search-row">
+            <input type="text" id="searchInput" class="search-input" placeholder="输入英文单词搜索（支持模糊匹配）" autocomplete="off">
+            <button class="btn-primary" id="searchBtn">搜索</button>
+        </div>
+        <div class="search-results" id="searchResults"></div>
+    </div>
+
+    <div class="custom-block">
+        <h3 class="block-title">手动添加新词</h3>
+        <p class="setting-hint">词库中找不到时，可手动录入</p>
+        <form id="manualForm" class="manual-form">
+            <input type="text" name="english" placeholder="英文单词" required>
+            <input type="text" name="phonetic" placeholder="音标（可选）">
+            <input type="text" name="chinese" placeholder="中文释义" required>
+            <button type="submit" class="btn-primary">添加</button>
+        </form>
+    </div>
+</div>
+
+<div class="custom-list">
+    <h3 class="block-title">我的自选单词（{{ rows|length }} 个）</h3>
+    <div class="table-wrap">
+        <table class="word-table">
+            <thead>
+                <tr>
+                    <th class="col-idx">序号</th>
+                    <th class="col-en">单词</th>
+                    <th class="col-ph">音标</th>
+                    <th class="col-cn">释义</th>
+                    <th class="col-action">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in rows %}
+                <tr data-word-id="{{ r.id }}">
+                    <td class="col-idx">{{ loop.index }}</td>
+                    <td class="col-en">{{ r.english }}</td>
+                    <td class="col-ph">{{ r.phonetic }}</td>
+                    <td class="col-cn">{{ r.chinese }}</td>
+                    <td class="col-action">
+                        <button class="btn-remove" data-word-id="{{ r.id }}">移除</button>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="empty">尚未添加单词，先搜索或手动添加</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const searchInput = document.getElementById('searchInput');
+const searchBtn = document.getElementById('searchBtn');
+const resultsEl = document.getElementById('searchResults');
+
+function doSearch() {
+    const q = searchInput.value.trim();
+    if (!q) { resultsEl.innerHTML = ''; return; }
+    fetch(`{{ url_for('vocab_search') }}?q=${encodeURIComponent(q)}`)
+        .then(r => r.json())
+        .then(res => {
+            if (!res.success || !res.results.length) {
+                resultsEl.innerHTML = '<p class="empty">未找到匹配单词</p>';
+                return;
+            }
+            resultsEl.innerHTML = res.results.map(w => `
+                <div class="result-item" data-word-id="${w.id}">
+                    <div class="r-en">${w.english} <span class="r-ph">${w.phonetic}</span></div>
+                    <div class="r-cn">${w.chinese}</div>
+                    <button class="btn-add ${w.added ? 'done' : ''}" data-word-id="${w.id}" ${w.added ? 'disabled' : ''}>
+                        ${w.added ? '已添加' : '加入'}
+                    </button>
+                </div>`).join('');
+            resultsEl.querySelectorAll('.btn-add').forEach(b => {
+                b.addEventListener('click', () => {
+                    const fd = new FormData();
+                    fd.append('word_id', b.dataset.wordId);
+                    fetch(`{{ url_for('vocab_custom_add') }}`, { method: 'POST', body: fd })
+                        .then(r => r.json())
+                        .then(r => {
+                            if (r.success) {
+                                b.disabled = true;
+                                b.classList.add('done');
+                                b.textContent = '已添加';
+                            }
+                        });
+                });
+            });
+        });
+}
+
+searchBtn.addEventListener('click', doSearch);
+searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doSearch(); } });
+
+// 手动添加
+document.getElementById('manualForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    fetch(`{{ url_for('vocab_custom_add') }}`, { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(res => {
+            if (res.success) {
+                e.target.reset();
+                location.reload();
+            } else {
+                showToast(res.message || '添加失败', 'error');
+            }
+        });
+});
+
+// 移除
+document.querySelectorAll('.btn-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const wordId = btn.dataset.wordId;
+        const row = btn.closest('tr');
+        fetch(`{{ url_for('vocab_custom_remove', word_id=0) }}`.replace('/0', `/${wordId}`), { method: 'POST' })
+            .then(r => r.json())
+            .then(res => { if (res.success) row.remove(); });
+    });
+});
+</script>
+{% endblock %}
