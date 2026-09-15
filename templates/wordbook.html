@@ -76,6 +76,9 @@
         <button class="btn-secondary" id="batchGroupBtn">📂 添加分组</button>
         {% if category != 'deleted' %}
         <button class="btn-secondary" id="editDefinitionsBtn">编辑模式</button>
+        <button class="btn-secondary" id="hideWordbookBtn">删除单词</button>
+        {% else %}
+        <button class="btn-secondary" id="restoreWordbookBtn">还原</button>
         {% endif %}
         <span class="batch-hint" id="batchHint" style="display:none;">已选 <b id="selCount">0</b> 项</span>
     </div>
@@ -252,6 +255,38 @@
     document.getElementById('selectAll').addEventListener('change', e => {
         document.querySelectorAll('.row-check').forEach(cb => { cb.checked = e.target.checked; });
         updateSelCount();
+    });
+
+    const hideWordbookBtn = document.getElementById('hideWordbookBtn');
+    if (hideWordbookBtn) hideWordbookBtn.addEventListener('click', () => {
+        const ids = getSelectedIds();
+        if (!ids.length) { showToast('请先勾选要删除的单词', 'error'); return; }
+        const fd = new FormData();
+        fd.append('word_ids', ids.join(','));
+        fetch('{{ url_for("wordbook_hide_words") }}', { method: 'POST', body: fd })
+            .then(r => r.json()).then(res => {
+                if (res.success) {
+                    ids.forEach(id => document.querySelector(`#wbTable tr[data-word-id="${id}"]`)?.remove());
+                    updateSelCount();
+                    showToast('已从我的单词书删除');
+                } else showToast(res.message || '删除失败', 'error');
+            });
+    });
+
+    const restoreWordbookBtn = document.getElementById('restoreWordbookBtn');
+    if (restoreWordbookBtn) restoreWordbookBtn.addEventListener('click', () => {
+        const ids = getSelectedIds();
+        if (!ids.length) { showToast('请先勾选要还原的单词', 'error'); return; }
+        const fd = new FormData();
+        fd.append('word_ids', ids.join(','));
+        fetch('{{ url_for("wordbook_restore_words") }}', { method: 'POST', body: fd })
+            .then(r => r.json()).then(res => {
+                if (res.success) {
+                    ids.forEach(id => document.querySelector(`#wbTable tr[data-word-id="${id}"]`)?.remove());
+                    updateSelCount();
+                    showToast('已还原到当前单词书中');
+                } else showToast(res.message || '还原失败', 'error');
+            });
     });
 
     // 加入今日

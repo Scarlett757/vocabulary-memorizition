@@ -99,6 +99,21 @@ class UserExcludedWord(db.Model):
     )
 
 
+class UserWordbookHidden(db.Model):
+    """用户从自己的单词书中隐藏的单词，不影响公共词库和今日清单。"""
+    __tablename__ = 'user_wordbook_hidden'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    word_id = db.Column(db.Integer, db.ForeignKey('words.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    word = db.relationship('Word')
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'word_id', name='uq_user_wordbook_hidden'),
+        db.Index('idx_wordbook_hidden_user', 'user_id'),
+    )
+
+
 class UserWordOverride(db.Model):
     """用户自己的单词释义覆盖，不修改公共词库。"""
     __tablename__ = 'user_word_overrides'

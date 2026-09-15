@@ -1117,6 +1117,55 @@ button {
     gap: 6px;
 }
 
+.group-mark-btns {
+    justify-content: flex-start;
+    align-items: center;
+    min-height: 32px;
+}
+
+.group-table .col-status,
+#groupTable .col-status {
+    text-align: right;
+    white-space: nowrap;
+}
+
+#groupTable .col-status .mini-text {
+    display: inline-block;
+    min-width: 38px;
+    text-align: center;
+}
+
+.password-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: min(100%, 280px);
+}
+
+.password-controls input {
+    width: 280px;
+    max-width: 100%;
+    min-height: 42px;
+    padding: 10px 13px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--card);
+    color: var(--ink);
+    font: inherit;
+    box-shadow: 0 2px 8px rgba(45, 42, 50, 0.06);
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.password-controls input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.password-controls input::placeholder {
+    color: var(--muted);
+}
+
 .mark-progress {
     margin: 4px 0;
 }

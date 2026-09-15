@@ -21,7 +21,7 @@ from flask import (
     session, jsonify, flash, abort
 )
 from config import Config
-from models import db, User, EmailCode, Word, UserWordProgress, UserMasteredWord, UserCustomWord, UserExcludedWord, UserWordOverride, UserSentence, UserGroup, UserGroupItem, TodayExtra, TodayPlan, Checkin, mask_phone
+from models import db, User, EmailCode, Word, UserWordProgress, UserMasteredWord, UserCustomWord, UserExcludedWord, UserWordbookHidden, UserWordOverride, UserSentence, UserGroup, UserGroupItem, TodayExtra, TodayPlan, Checkin, mask_phone
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -347,7 +347,6 @@ def get_today_words(user, count=None):
     if count is None:
         count = get_user_daily_goal(user)
     today = date.today()
-    excluded_ids = {item[0] for item in db.session.query(UserExcludedWord.word_id).filter_by(user_id=user.id).all()}
 
     # 查今日是否已生成计划
     plan_items = TodayPlan.query.filter_by(user_id=user.id, plan_date=today).all()
@@ -358,8 +357,6 @@ def get_today_words(user, count=None):
         new_q = level_word_query(user) if user.auto_daily_words else Word.query.filter(False)
         if learned_ids:
             new_q = new_q.filter(~Word.id.in_(learned_ids))
-        if excluded_ids:
-            new_q = new_q.filter(~Word.id.in_(excluded_ids))
         new_words = new_q.order_by(Word.id.asc()).limit(count).all()
 
         review_progress = UserWordProgress.query.filter(
@@ -377,7 +374,7 @@ def get_today_words(user, count=None):
             ),
         ).all() if user.auto_daily_words else []
         review_words = [Word.query.get(p.word_id) for p in review_progress]
-        review_words = [w for w in review_words if w and w.id not in excluded_ids]
+        review_words = [w for w in review_words if w]
 
         extra_items = TodayExtra.query.filter_by(user_id=user.id, added_date=today).all()
         extra_words = [it.word for it in extra_items if it.word]
@@ -406,7 +403,7 @@ def get_today_words(user, count=None):
         plan_items = TodayPlan.query.filter_by(user_id=user.id, plan_date=today).all()
 
     # 从 TodayPlan 加载今日词
-    today_words = [it.word for it in plan_items if it.word and it.word.id not in excluded_ids]
+    today_words = [it.word for it in plan_items if it.word]
     today_words.sort(key=lambda w: w.id)
     new_words = [w for w in today_words if any(it.role == 'new' and it.word_id == w.id
                  for it in plan_items)]
@@ -435,7 +432,6 @@ def add_continue_words(user, count):
     plan_ids = [p.word_id for p in TodayPlan.query.filter_by(
         user_id=user.id, plan_date=today).all()]
     exclude_ids = list(set(learned_ids + plan_ids))
-    exclude_ids.extend(item[0] for item in db.session.query(UserExcludedWord.word_id).filter_by(user_id=user.id).all())
     q = level_word_query(user)
     if exclude_ids:
         q = q.filter(~Word.id.in_(exclude_ids))
@@ -466,11 +462,8 @@ def index():
     learned_ids = db.session.query(UserWordProgress.word_id).filter_by(user_id=user.id).all()
     learned_ids = [i[0] for i in learned_ids]
     new_words_q = level_word_query(user) if user.auto_daily_words else Word.query.filter(False)
-    excluded_ids = [item[0] for item in db.session.query(UserExcludedWord.word_id).filter_by(user_id=user.id).all()]
     if learned_ids:
         new_words_q = new_words_q.filter(~Word.id.in_(learned_ids))
-    if excluded_ids:
-        new_words_q = new_words_q.filter(~Word.id.in_(excluded_ids))
     new_today = new_words_q.order_by(Word.id.asc()).limit(goal).count()
     today_date = date.today()
     review_today = UserWordProgress.query.filter(
@@ -486,7 +479,7 @@ def index():
                 db.func.date(UserWordProgress.last_reviewed_at) < today_date,
             ),
         ),
-    ).filter(~UserWordProgress.word_id.in_(excluded_ids)).count() if user.auto_daily_words else 0
+    ).count() if user.auto_daily_words else 0
     familiar = UserWordProgress.query.filter_by(user_id=user.id, status='familiar').count()
     deleted_count = UserExcludedWord.query.filter_by(user_id=user.id).count()
     total = level_word_query(user).count()
@@ -539,6 +532,16 @@ def settings():
         user.vocab_level = level
         user.familiar_threshold = ft
         user.auto_daily_words = 1 if request.form.get('auto_daily_words') == '1' else 0
+        new_password = (request.form.get('new_password') or '').strip()
+        confirm_password = (request.form.get('confirm_password') or '').strip()
+        if new_password or confirm_password:
+            if len(new_password) < 6:
+                flash('密码至少需要 6 位', 'error')
+                return render_template('settings.html', user=user, level_labels=LEVEL_LABELS)
+            if new_password != confirm_password:
+                flash('两次输入的密码不一致', 'error')
+                return render_template('settings.html', user=user, level_labels=LEVEL_LABELS)
+            user.set_password(new_password)
         # 词书或自动选词开关改变后，重新建立当天自动计划；手动添加的 TodayExtra 会保留。
         TodayPlan.query.filter_by(user_id=user.id, plan_date=date.today()).delete(
             synchronize_session=False)
@@ -560,15 +563,15 @@ def wordbook():
     status_filter = request.args.get('status', 'all')
     category = request.args.get('category', '')
     progress_map = {p.word_id: p for p in UserWordProgress.query.filter_by(user_id=user.id).all()}
-    excluded_ids = {item[0] for item in db.session.query(UserExcludedWord.word_id).filter_by(user_id=user.id).all()}
+    hidden_ids = {item[0] for item in db.session.query(UserWordbookHidden.word_id).filter_by(user_id=user.id).all()}
     words = level_word_query(user).order_by(Word.id.asc()).all()
     familiar_only = category == 'familiar'
     if category == 'deleted':
-        words = [item.word for item in UserExcludedWord.query.filter_by(user_id=user.id).all() if item.word]
+        words = [item.word for item in UserWordbookHidden.query.filter_by(user_id=user.id).all() if item.word]
     elif category == 'mastered':
         words = [item.word for item in UserMasteredWord.query.filter_by(user_id=user.id).all() if item.word]
-    elif excluded_ids:
-        words = [w for w in words if w.id not in excluded_ids]
+    elif hidden_ids:
+        words = [w for w in words if w.id not in hidden_ids]
 
     today_date = date.today()
     if category == 'new_today':
@@ -594,7 +597,7 @@ def wordbook():
             'id': w.id, 'english': w.english, 'chinese': w.chinese,
             'phonetic': w.phonetic or '', 'status': status,
             'progress': p,
-            'deleted': w.id in excluded_ids,
+            'deleted': w.id in hidden_ids,
         })
     if status_filter != 'all' and not category:
         rows = [r for r in rows if r['status'] == status_filter]
@@ -613,6 +616,42 @@ def wordbook():
                            familiar_threshold=get_user_familiar_threshold(user),
                            total_count=total_count, familiar_count=familiar_count,
                            learning_count=learning_count)
+
+
+@app.route('/api/wordbook/hide_words', methods=['POST'])
+@login_required
+def wordbook_hide_words():
+    """从当前用户单词书隐藏单词，不删除公共词库或今日计划。"""
+    user = current_user()
+    raw_ids = request.form.get('word_ids', '')
+    word_ids = {int(value) for value in raw_ids.split(',') if value.strip().isdigit()}
+    if not word_ids:
+        return jsonify(success=False, message='未选择单词'), 400
+    existing_ids = {item.word_id for item in UserWordbookHidden.query.filter(
+        UserWordbookHidden.user_id == user.id,
+        UserWordbookHidden.word_id.in_(word_ids),
+    ).all()}
+    for word_id in word_ids - existing_ids:
+        db.session.add(UserWordbookHidden(user_id=user.id, word_id=word_id))
+    db.session.commit()
+    return jsonify(success=True, hidden=len(word_ids))
+
+
+@app.route('/api/wordbook/restore_words', methods=['POST'])
+@login_required
+def wordbook_restore_words():
+    """将当前用户从单词书隐藏的单词还原。"""
+    user = current_user()
+    raw_ids = request.form.get('word_ids', '')
+    word_ids = {int(value) for value in raw_ids.split(',') if value.strip().isdigit()}
+    if not word_ids:
+        return jsonify(success=False, message='未选择单词'), 400
+    deleted = UserWordbookHidden.query.filter(
+        UserWordbookHidden.user_id == user.id,
+        UserWordbookHidden.word_id.in_(word_ids),
+    ).delete(synchronize_session=False)
+    db.session.commit()
+    return jsonify(success=True, restored=deleted)
 
 
 @app.route('/today')
@@ -1022,9 +1061,6 @@ def exclude_today_word(word_id):
     """永久移出当前用户的今日背诵自动清单。"""
     user = current_user()
     Word.query.get_or_404(word_id)
-    item = UserExcludedWord.query.filter_by(user_id=user.id, word_id=word_id).first()
-    if not item:
-        db.session.add(UserExcludedWord(user_id=user.id, word_id=word_id))
     TodayPlan.query.filter_by(user_id=user.id, word_id=word_id, plan_date=date.today()).delete(
         synchronize_session=False)
     TodayExtra.query.filter_by(user_id=user.id, word_id=word_id, added_date=date.today()).delete(
@@ -1043,12 +1079,6 @@ def exclude_today_words():
     if not word_ids:
         return jsonify(success=False, message='未选择单词'), 400
     valid_ids = {word.id for word in Word.query.filter(Word.id.in_(word_ids)).all()}
-    existing_ids = {item.word_id for item in UserExcludedWord.query.filter(
-        UserExcludedWord.user_id == user.id,
-        UserExcludedWord.word_id.in_(valid_ids),
-    ).all()}
-    for current_word_id in valid_ids - existing_ids:
-        db.session.add(UserExcludedWord(user_id=user.id, word_id=current_word_id))
     TodayPlan.query.filter(
         TodayPlan.user_id == user.id,
         TodayPlan.plan_date == date.today(),
