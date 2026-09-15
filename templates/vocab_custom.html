@@ -53,7 +53,9 @@
                     </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="5" class="empty">尚未添加单词，先搜索或手动添加</td></tr>
+                <tr>
+                    <td colspan="5" class="empty">尚未添加单词，先搜索或手动添加</td>
+                </tr>
                 {% endfor %}
             </tbody>
         </table>
@@ -62,21 +64,21 @@
 {% endblock %}
 {% block scripts %}
 <script>
-const searchInput = document.getElementById('searchInput');
-const searchBtn = document.getElementById('searchBtn');
-const resultsEl = document.getElementById('searchResults');
+    const searchInput = document.getElementById('searchInput');
+    const searchBtn = document.getElementById('searchBtn');
+    const resultsEl = document.getElementById('searchResults');
 
-function doSearch() {
-    const q = searchInput.value.trim();
-    if (!q) { resultsEl.innerHTML = ''; return; }
-    fetch(`{{ url_for('vocab_search') }}?q=${encodeURIComponent(q)}`)
-        .then(r => r.json())
-        .then(res => {
-            if (!res.success || !res.results.length) {
-                resultsEl.innerHTML = '<p class="empty">未找到匹配单词</p>';
-                return;
-            }
-            resultsEl.innerHTML = res.results.map(w => `
+    function doSearch() {
+        const q = searchInput.value.trim();
+        if (!q) { resultsEl.innerHTML = ''; return; }
+        fetch(`{{ url_for('vocab_search') }}?q=${encodeURIComponent(q)}`)
+            .then(r => r.json())
+            .then(res => {
+                if (!res.success || !res.results.length) {
+                    resultsEl.innerHTML = '<p class="empty">未找到匹配单词</p>';
+                    return;
+                }
+                resultsEl.innerHTML = res.results.map(w => `
                 <div class="result-item" data-word-id="${w.id}">
                     <div class="r-en">${w.english} <span class="r-ph">${w.phonetic}</span></div>
                     <div class="r-cn">${w.chinese}</div>
@@ -84,52 +86,56 @@ function doSearch() {
                         ${w.added ? '已添加' : '加入'}
                     </button>
                 </div>`).join('');
-            resultsEl.querySelectorAll('.btn-add').forEach(b => {
-                b.addEventListener('click', () => {
-                    const fd = new FormData();
-                    fd.append('word_id', b.dataset.wordId);
-                    fetch(`{{ url_for('vocab_custom_add') }}`, { method: 'POST', body: fd })
-                        .then(r => r.json())
-                        .then(r => {
-                            if (r.success) {
-                                b.disabled = true;
-                                b.classList.add('done');
-                                b.textContent = '已添加';
-                            }
-                        });
+                resultsEl.querySelectorAll('.btn-add').forEach(b => {
+                    b.addEventListener('click', () => {
+                        const fd = new FormData();
+                        fd.append('word_id', b.dataset.wordId);
+                        fetch(`{{ url_for('vocab_custom_add') }}`, { method: 'POST', body: fd })
+                            .then(r => r.json())
+                            .then(r => {
+                                if (r.success) {
+                                    b.disabled = true;
+                                    b.classList.add('done');
+                                    b.textContent = '已添加';
+                                    if (r.conflict) showToast('该词已存在，已优先使用你的释义');
+                                } else {
+                                    showToast(r.message || '添加失败', 'error');
+                                }
+                            });
+                    });
                 });
             });
-        });
-}
+    }
 
-searchBtn.addEventListener('click', doSearch);
-searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doSearch(); } });
+    searchBtn.addEventListener('click', doSearch);
+    searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doSearch(); } });
 
-// 手动添加
-document.getElementById('manualForm').addEventListener('submit', e => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    fetch(`{{ url_for('vocab_custom_add') }}`, { method: 'POST', body: fd })
-        .then(r => r.json())
-        .then(res => {
-            if (res.success) {
-                e.target.reset();
-                location.reload();
-            } else {
-                showToast(res.message || '添加失败', 'error');
-            }
-        });
-});
-
-// 移除
-document.querySelectorAll('.btn-remove').forEach(btn => {
-    btn.addEventListener('click', () => {
-        const wordId = btn.dataset.wordId;
-        const row = btn.closest('tr');
-        fetch(`{{ url_for('vocab_custom_remove', word_id=0) }}`.replace('/0', `/${wordId}`), { method: 'POST' })
+    // 手动添加
+    document.getElementById('manualForm').addEventListener('submit', e => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        fetch(`{{ url_for('vocab_custom_add') }}`, { method: 'POST', body: fd })
             .then(r => r.json())
-            .then(res => { if (res.success) row.remove(); });
+            .then(res => {
+                if (res.success) {
+                    e.target.reset();
+                    if (res.conflict) showToast('该词已存在，已优先使用你的释义');
+                    location.reload();
+                } else {
+                    showToast(res.message || '添加失败', 'error');
+                }
+            });
     });
-});
+
+    // 移除
+    document.querySelectorAll('.btn-remove').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const wordId = btn.dataset.wordId;
+            const row = btn.closest('tr');
+            fetch(`{{ url_for('vocab_custom_remove', word_id=0) }}`.replace('/0', `/${wordId}`), { method: 'POST' })
+                .then(r => r.json())
+                .then(res => { if (res.success) row.remove(); });
+        });
+    });
 </script>
 {% endblock %}

@@ -30,6 +30,8 @@ class User(db.Model):
     vocab_level = db.Column(db.String(16), default='cet4')
     # 熟悉判定阈值：连续答对多少次标记为熟悉（用户可自定义，默认 3）
     familiar_threshold = db.Column(db.Integer, default=3)
+    # 是否自动把当前词书的新词/复习词加入今日清单
+    auto_daily_words = db.Column(db.Integer, default=1)
     created_at = db.Column(db.DateTime, default=datetime.now)
 
     def set_password(self, password):
@@ -79,6 +81,36 @@ class UserCustomWord(db.Model):
     __table_args__ = (
         db.UniqueConstraint('user_id', 'word_id', name='uq_user_custom_word'),
         db.Index('idx_custom_user', 'user_id'),
+    )
+
+
+class UserExcludedWord(db.Model):
+    """用户永久移出今日背诵清单的单词。"""
+    __tablename__ = 'user_excluded_words'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    word_id = db.Column(db.Integer, db.ForeignKey('words.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    word = db.relationship('Word')
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'word_id', name='uq_user_excluded_word'),
+        db.Index('idx_excluded_user', 'user_id'),
+    )
+
+
+class UserWordOverride(db.Model):
+    """用户自己的单词释义覆盖，不修改公共词库。"""
+    __tablename__ = 'user_word_overrides'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    word_id = db.Column(db.Integer, db.ForeignKey('words.id'), nullable=False)
+    chinese = db.Column(db.String(512), nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'word_id', name='uq_user_word_override'),
+        db.Index('idx_override_user', 'user_id'),
     )
 
 
@@ -194,6 +226,21 @@ class UserWordProgress(db.Model):
         db.UniqueConstraint('user_id', 'word_id', name='uq_user_word'),
         db.Index('idx_progress_user_status', 'user_id', 'status'),
         db.Index('idx_progress_next_review', 'user_id', 'next_review_at'),
+    )
+
+
+class UserMasteredWord(db.Model):
+    """用户在熟悉词复习日再次答对后确认已会的单词。"""
+    __tablename__ = 'user_mastered_words'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    word_id = db.Column(db.Integer, db.ForeignKey('words.id'), nullable=False)
+    mastered_at = db.Column(db.DateTime, default=datetime.now)
+    word = db.relationship('Word')
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'word_id', name='uq_user_mastered_word'),
+        db.Index('idx_mastered_user', 'user_id'),
     )
 
 

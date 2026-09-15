@@ -7,7 +7,7 @@
         {% if forgotten_mode %}
         共 {{ words|length }} 个今日标记为忘记的单词，逐个重新背诵巩固（点 ✓ 进度 +1/{{ familiar_threshold or 3 }}，点 ✗ 清零）
         {% else %}
-        共 {{ words|length }} 个单词（{{ goal }} 个新词 + {{ words|length - goal }} 个复习/额外词），逐个标记熟记或忘记
+        共 {{ words|length }} 个单词（{{ new_count }} 个新词 + {{ review_extra_count }} 个复习/额外词），逐个标记熟记或忘记
         {% endif %}
     </p>
 </div>
@@ -15,6 +15,7 @@
 {% if not forgotten_mode %}
 <div class="print-bar">
     <button class="btn-primary" id="addWordsBtn">➕ 添加词汇</button>
+    <button class="btn-secondary" id="removeWordsBtn">删除单词</button>
     <button class="btn-secondary" id="printBtn">🖨 打印</button>
     <button class="btn-secondary" id="downloadImgBtn">📷 下载图片</button>
     <button class="btn-secondary" id="exportCsvBtn">📊 导出表格</button>
@@ -50,42 +51,73 @@
 </div>
 {% endif %}
 
-<div class="today-list" id="todayList">
-    {% for w in words %}
-    {% set p = progress_map.get(w.id) %}
-    <div class="today-row" data-word-id="{{ w.id }}" data-en="{{ w.english }}" data-cn="{{ w.chinese }}"
-        data-ph="{{ w.phonetic or '' }}" data-known="{{ 1 if p and p.is_known_today else 0 }}">
-        <div class="t-idx">{{ loop.index }}</div>
-        <div class="t-word">
-            <div class="t-en">{{ w.english }}</div>
-            <div class="t-ph">{{ w.phonetic or '' }}</div>
-        </div>
-        <div class="t-pron">
-            <button class="pron-mini" data-accent="us" data-word-id="{{ w.id }}" title="美音">US</button>
-            <button class="pron-mini" data-accent="uk" data-word-id="{{ w.id }}" title="英音">UK</button>
-        </div>
-        <div class="t-cn">{{ w.chinese }}</div>
-        <div class="t-mark">
-            <span class="status-text status-{{ p.status if p else 'new' }}">
-                {{ status_map[p.status] if p else '新词' }}
-            </span>
-            <div class="mark-progress">
-                <span class="cc-text">{{ (p.consecutive_correct if p else 0) or 0 }}/{{ familiar_threshold or 3
-                    }}</span>
-            </div>
-            <div class="mark-btns">
-                <button class="mark-btn mark-known {% if p and p.is_known_today %}active{% endif %}" data-result="known"
-                    data-word-id="{{ w.id }}" title="熟记">✓</button>
-                <button
-                    class="mark-btn mark-forgotten {% if p and not p.is_known_today and p.status != 'new' %}active{% endif %}"
-                    data-result="forgotten" data-word-id="{{ w.id }}" title="忘记">✗</button>
-            </div>
+<div class="table-wrap today-table-wrap">
+    <table class="word-table" id="todayList">
+        <thead>
+            <tr>
+                <th class="col-sel"><input type="checkbox" id="selectAllToday"></th>
+                <th class="col-idx">序号</th>
+                <th class="col-en">单词</th>
+                <th class="col-ph">音标</th>
+                <th class="col-cn">释义</th>
+                <th class="col-status">状态</th>
+                <th class="col-action">操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for w in words %}
+            {% set p = progress_map.get(w.id) %}
+            <tr class="today-row" data-word-id="{{ w.id }}" data-en="{{ w.english }}" data-cn="{{ w.chinese }}"
+                data-ph="{{ w.phonetic or '' }}" data-known="{{ 1 if p and p.is_known_today else 0 }}">
+                <td class="col-sel"><input type="checkbox" class="today-check" data-word-id="{{ w.id }}"></td>
+                <td class="col-idx t-idx">{{ loop.index }}</td>
+                <td class="col-en t-word">
+                    <div class="t-en">{{ w.english }}</div>
+                </td>
+                <td class="col-ph t-pron"><span class="t-ph">{{ w.phonetic or '' }}</span>
+                    <button class="pron-mini" data-accent="us" data-word-id="{{ w.id }}" title="美音">US</button>
+                    <button class="pron-mini" data-accent="uk" data-word-id="{{ w.id }}" title="英音">UK</button>
+                </td>
+                <td class="col-cn t-cn">{{ w.chinese }}</td>
+                <td class="col-status t-mark">
+                    <span class="status-text status-{{ p.status if p else 'new' }}">
+                        {{ status_map[p.status] if p else '新词' }}
+                    </span>
+                    <div class="mark-progress">
+                        <span class="cc-text">{{ (p.consecutive_correct if p else 0) or 0 }}/{{ familiar_threshold or 3
+                            }}</span>
+                    </div>
+                </td>
+                <td class="col-action">
+                    <div class="mark-btns">
+                        <button class="mark-btn mark-known {% if p and p.is_known_today %}active{% endif %}"
+                            data-result="known" data-word-id="{{ w.id }}" title="熟记">✓</button>
+                        <button
+                            class="mark-btn mark-forgotten {% if p and not p.is_known_today and p.status != 'new' %}active{% endif %}"
+                            data-result="forgotten" data-word-id="{{ w.id }}" title="忘记">✗</button>
+                    </div>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="7" class="empty">今日已无单词，请先导入词库。</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if not forgotten_mode %}
+<div class="group-select-modal" id="removeWordsModal">
+    <div class="group-select-box">
+        <h4>确定移出背诵列表吗</h4>
+        <div class="group-new-row">
+            <button class="btn-secondary" id="cancelRemoveWords">取消</button>
+            <button class="btn-primary" id="confirmRemoveWords">确定</button>
         </div>
     </div>
-    {% else %}
-    <div class="empty-card">今日已无单词，请先导入词库。</div>
-    {% endfor %}
 </div>
+{% endif %}
 
 {% if not forgotten_mode %}
 <!-- 添加词汇弹窗 -->
@@ -236,18 +268,26 @@
         link.click();
     });
 
-    // 列显示/隐藏（针对今日列表的非 table 布局）
+    // 列显示/隐藏：今日列表与单词书使用相同的表格列。
     function applyTodayColVisibility() {
         const showEn = document.getElementById('toggleEn').checked;
         const showCn = document.getElementById('toggleCn').checked;
         const showPh = document.getElementById('togglePh').checked;
-        document.querySelectorAll('.today-row .t-en').forEach(el => el.style.display = showEn ? '' : 'none');
-        document.querySelectorAll('.today-row .t-cn').forEach(el => el.style.display = showCn ? '' : 'none');
-        document.querySelectorAll('.today-row .t-ph').forEach(el => el.style.display = showPh ? '' : 'none');
+        document.querySelectorAll('#todayList .col-en').forEach(el => el.style.display = showEn ? '' : 'none');
+        document.querySelectorAll('#todayList .col-cn').forEach(el => el.style.display = showCn ? '' : 'none');
+        document.querySelectorAll('#todayList .col-ph').forEach(el => el.style.display = showPh ? '' : 'none');
     }
     ['toggleEn', 'toggleCn', 'togglePh'].forEach(id => {
         document.getElementById(id).addEventListener('change', applyTodayColVisibility);
     });
+    const selectAllToday = document.getElementById('selectAllToday');
+    if (selectAllToday) {
+        selectAllToday.addEventListener('change', () => {
+            document.querySelectorAll('.today-check').forEach(input => {
+                input.checked = selectAllToday.checked;
+            });
+        });
+    }
 
     // 加入分组弹窗
     const groupModal = document.getElementById('groupModal');
@@ -432,6 +472,39 @@
                 .catch(() => { /* 网络错误静默：不弹窗 */ });
         });
     });
+
+    const removeWordsBtn = document.getElementById('removeWordsBtn');
+    const removeWordsModal = document.getElementById('removeWordsModal');
+    if (removeWordsBtn && removeWordsModal) {
+        const selectedTodayIds = () => Array.from(document.querySelectorAll('.today-check:checked'))
+            .map(input => input.dataset.wordId);
+        removeWordsBtn.addEventListener('click', () => {
+            if (!selectedTodayIds().length) {
+                showToast('请先勾选要移除的单词', 'error');
+                return;
+            }
+            removeWordsModal.classList.add('show');
+        });
+        document.getElementById('cancelRemoveWords').addEventListener('click', () => {
+            removeWordsModal.classList.remove('show');
+        });
+        document.getElementById('confirmRemoveWords').addEventListener('click', () => {
+            const fd = new FormData();
+            fd.append('word_ids', selectedTodayIds().join(','));
+            fetch('{{ url_for("exclude_today_words") }}', { method: 'POST', body: fd })
+                .then(r => r.json()).then(res => {
+                    if (res.success) {
+                        selectedTodayIds().forEach(wordId => {
+                            const row = document.querySelector(`.today-row[data-word-id="${wordId}"]`);
+                            if (row) row.remove();
+                        });
+                        removeWordsModal.classList.remove('show');
+                        renumberRows();
+                        showToast('删除成功');
+                    }
+                });
+        });
+    }
 
     updateProgress();
 

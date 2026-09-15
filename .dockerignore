@@ -9,6 +9,7 @@
 *.db
 dev.db
 *.sqlite
+ecdict.csv
 __pycache__/
 *.pyc
 *.pyo
@@ -28,6 +29,8 @@ test_*.py
 # 日志
 *.log
 logs/
+audio_result.txt
+static/audio/**/*.mp3
 
 # 容器内不需要
 Dockerfile

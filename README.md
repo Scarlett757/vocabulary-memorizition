@@ -70,24 +70,24 @@ python app.py
 
 ### Docker Compose
 
-先复制并填写环境变量：
+复制 Docker 环境变量模板并填写配置。不要把真实配置提交到 Git：
 
 ```bash
-cp .env.example .env
+cp .env.example .env.docker
 ```
 
 启动服务：
 
 ```bash
-docker compose up -d --build
+docker compose -p vocabulary --env-file .env.docker up -d --build app mysql
 ```
 
-访问 <http://localhost:5000>。Compose 会启动应用、MySQL 和可选的 Ollama 服务。Ollama 模型首次准备可能需要较长时间和数 GB 磁盘空间。
+访问 <http://localhost:5001>。如果宿主机 5001 已被占用，可在 `docker-compose.yml` 中修改左侧端口。Ollama 是可选服务，首次准备模型可能需要较长时间和数 GB 磁盘空间。
 
 停止服务：
 
 ```bash
-docker compose down
+docker compose -p vocabulary --env-file .env.docker down
 ```
 
 MySQL 和 Ollama 数据保存在 Docker named volumes 中。

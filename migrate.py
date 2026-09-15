@@ -10,6 +10,9 @@ def main():
             ('ALTER TABLE words ADD COLUMN frequency INT DEFAULT 0', 'words.frequency'),
             ('ALTER TABLE words MODIFY COLUMN chinese VARCHAR(512)', 'words.chinese widen'),
             ('ALTER TABLE users ADD COLUMN vocab_level VARCHAR(16) DEFAULT "cet4"', 'users.vocab_level'),
+            ('ALTER TABLE users ADD COLUMN auto_daily_words INT DEFAULT 1', 'users.auto_daily_words'),
+            ('ALTER TABLE user_excluded_words ADD COLUMN created_at DATETIME', 'user_excluded_words.created_at'),
+            ('ALTER TABLE user_word_overrides ADD COLUMN updated_at DATETIME', 'user_word_overrides.updated_at'),
         ]
         for sql, name in stmts:
             try:

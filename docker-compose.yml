@@ -5,7 +5,9 @@ services:
     container_name: vocab_app
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - "5001:5000"
+    volumes:
+      - vocab_audio:/app/static/audio
     depends_on:
       mysql:
         condition: service_healthy
@@ -24,8 +26,8 @@ services:
       MAIL_USERNAME: ${MAIL_USERNAME}
       MAIL_PASSWORD: ${MAIL_PASSWORD}
       MAIL_FROM: ${MAIL_FROM:-小易教育}
-      # Ollama（可选；同一 Docker 网络内主机名 ollama）
-      OLLAMA_BASE_URL: http://ollama:11434/v1
+      # Ollama：默认使用宿主机已有服务；若启动下方 Ollama 容器则改为 http://ollama:11434/v1
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
     networks:
       - vocab_net
@@ -45,18 +47,27 @@ services:
       - vocab_mysql_data:/var/lib/mysql
     # 健康检查：MySQL 就绪后 app 才启动
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpass}"]
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "localhost",
+          "-u",
+          "root",
+          "-p${MYSQL_ROOT_PASSWORD:-rootpass}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
-    ports:
-      - "3306:3306"
     networks:
       - vocab_net
 
   # Ollama（可选；如已在外部运行，可注释掉本服务并改 OLLAMA_BASE_URL）
   ollama:
+    profiles: ["ollama"]
     image: ollama/ollama:latest
     container_name: vocab_ollama
     restart: unless-stopped
@@ -69,7 +80,11 @@ services:
     # 启动后自动拉取 qwen2.5:7b 模型（首次约 5GB，请耐心等待）
     # 如已手动 pull 过，可注释掉此 healthcheck / 入口脚本
     healthcheck:
-      test: ["CMD-SHELL", "ollama list | grep -q qwen2.5:7b || ollama pull qwen2.5:7b"]
+      test:
+        [
+          "CMD-SHELL",
+          "ollama list | grep -q qwen2.5:7b || ollama pull qwen2.5:7b",
+        ]
       interval: 60s
       timeout: 600s
       retries: 3
@@ -78,6 +93,7 @@ services:
 volumes:
   vocab_mysql_data:
   vocab_ollama_data:
+  vocab_audio:
 
 networks:
   vocab_net:

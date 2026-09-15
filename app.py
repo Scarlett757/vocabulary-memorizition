@@ -5,6 +5,7 @@
 主界面、我的单词书、今日背诵、单个单词背诵、单词标记 API。
 """
 import random
+import copy
 import smtplib
 import string
 from datetime import datetime, timedelta, date
@@ -20,7 +21,7 @@ from flask import (
     session, jsonify, flash, abort
 )
 from config import Config
-from models import db, User, EmailCode, Word, UserWordProgress, UserCustomWord, UserSentence, UserGroup, UserGroupItem, TodayExtra, TodayPlan, Checkin, mask_phone
+from models import db, User, EmailCode, Word, UserWordProgress, UserMasteredWord, UserCustomWord, UserExcludedWord, UserWordOverride, UserSentence, UserGroup, UserGroupItem, TodayExtra, TodayPlan, Checkin, mask_phone
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -310,6 +311,24 @@ def get_user_familiar_threshold(user):
     return user.familiar_threshold or app.config['FAMILIAR_THRESHOLD']
 
 
+def apply_word_overrides(user, words):
+    """将当前用户的释义覆盖应用到页面使用的单词对象。"""
+    if not words:
+        return words
+    overrides = UserWordOverride.query.filter(
+        UserWordOverride.user_id == user.id,
+        UserWordOverride.word_id.in_([w.id for w in words]),
+    ).all()
+    override_map = {item.word_id: item.chinese for item in overrides}
+    result = []
+    for word in words:
+        display_word = copy.copy(word)
+        if word.id in override_map:
+            display_word.chinese = override_map[word.id]
+        result.append(display_word)
+    return result
+
+
 def audio_filename(english):
     """把英文单词转为音频文件名（与 gen_audio.py 中 safe_filename 一致）。"""
     import re
@@ -328,6 +347,7 @@ def get_today_words(user, count=None):
     if count is None:
         count = get_user_daily_goal(user)
     today = date.today()
+    excluded_ids = {item[0] for item in db.session.query(UserExcludedWord.word_id).filter_by(user_id=user.id).all()}
 
     # 查今日是否已生成计划
     plan_items = TodayPlan.query.filter_by(user_id=user.id, plan_date=today).all()
@@ -335,9 +355,11 @@ def get_today_words(user, count=None):
         # 首次生成今日计划：新词 + 复习词 + 手动添加词
         learned = db.session.query(UserWordProgress.word_id).filter_by(user_id=user.id).all()
         learned_ids = [i[0] for i in learned]
-        new_q = level_word_query(user)
+        new_q = level_word_query(user) if user.auto_daily_words else Word.query.filter(False)
         if learned_ids:
             new_q = new_q.filter(~Word.id.in_(learned_ids))
+        if excluded_ids:
+            new_q = new_q.filter(~Word.id.in_(excluded_ids))
         new_words = new_q.order_by(Word.id.asc()).limit(count).all()
 
         review_progress = UserWordProgress.query.filter(
@@ -353,9 +375,9 @@ def get_today_words(user, count=None):
                     db.func.date(UserWordProgress.last_reviewed_at) < today,
                 ),
             ),
-        ).all()
+        ).all() if user.auto_daily_words else []
         review_words = [Word.query.get(p.word_id) for p in review_progress]
-        review_words = [w for w in review_words if w]
+        review_words = [w for w in review_words if w and w.id not in excluded_ids]
 
         extra_items = TodayExtra.query.filter_by(user_id=user.id, added_date=today).all()
         extra_words = [it.word for it in extra_items if it.word]
@@ -384,7 +406,7 @@ def get_today_words(user, count=None):
         plan_items = TodayPlan.query.filter_by(user_id=user.id, plan_date=today).all()
 
     # 从 TodayPlan 加载今日词
-    today_words = [it.word for it in plan_items if it.word]
+    today_words = [it.word for it in plan_items if it.word and it.word.id not in excluded_ids]
     today_words.sort(key=lambda w: w.id)
     new_words = [w for w in today_words if any(it.role == 'new' and it.word_id == w.id
                  for it in plan_items)]
@@ -398,7 +420,7 @@ def get_today_words(user, count=None):
         db.func.date(UserWordProgress.last_reviewed_at) == today,
     ).all())
     today_words = [w for w in today_words if w.id not in known_today_ids]
-    return today_words, new_words, review_words
+    return apply_word_overrides(user, today_words), apply_word_overrides(user, new_words), apply_word_overrides(user, review_words)
 
 
 def add_continue_words(user, count):
@@ -413,6 +435,7 @@ def add_continue_words(user, count):
     plan_ids = [p.word_id for p in TodayPlan.query.filter_by(
         user_id=user.id, plan_date=today).all()]
     exclude_ids = list(set(learned_ids + plan_ids))
+    exclude_ids.extend(item[0] for item in db.session.query(UserExcludedWord.word_id).filter_by(user_id=user.id).all())
     q = level_word_query(user)
     if exclude_ids:
         q = q.filter(~Word.id.in_(exclude_ids))
@@ -442,9 +465,12 @@ def index():
     goal = get_user_daily_goal(user)
     learned_ids = db.session.query(UserWordProgress.word_id).filter_by(user_id=user.id).all()
     learned_ids = [i[0] for i in learned_ids]
-    new_words_q = level_word_query(user)
+    new_words_q = level_word_query(user) if user.auto_daily_words else Word.query.filter(False)
+    excluded_ids = [item[0] for item in db.session.query(UserExcludedWord.word_id).filter_by(user_id=user.id).all()]
     if learned_ids:
         new_words_q = new_words_q.filter(~Word.id.in_(learned_ids))
+    if excluded_ids:
+        new_words_q = new_words_q.filter(~Word.id.in_(excluded_ids))
     new_today = new_words_q.order_by(Word.id.asc()).limit(goal).count()
     today_date = date.today()
     review_today = UserWordProgress.query.filter(
@@ -460,8 +486,9 @@ def index():
                 db.func.date(UserWordProgress.last_reviewed_at) < today_date,
             ),
         ),
-    ).count()
+    ).filter(~UserWordProgress.word_id.in_(excluded_ids)).count() if user.auto_daily_words else 0
     familiar = UserWordProgress.query.filter_by(user_id=user.id, status='familiar').count()
+    deleted_count = UserExcludedWord.query.filter_by(user_id=user.id).count()
     total = level_word_query(user).count()
     today_learned = get_today_learned_count(user)
     # 今日忘记单词数：今天标记为忘记的单词（is_known_today=0 且 last_reviewed_at 为今天）
@@ -476,7 +503,7 @@ def index():
                            review_today=review_today, familiar=familiar, total=total,
                            goal=goal, today_learned=today_learned,
                            level_label=level_label, vocab_level=user.vocab_level or 'cet4',
-                           forgotten_count=forgotten_count)
+                           forgotten_count=forgotten_count, deleted_count=deleted_count)
 
 
 @app.route('/settings', methods=['GET', 'POST'])
@@ -511,6 +538,10 @@ def settings():
         user.default_accent = accent
         user.vocab_level = level
         user.familiar_threshold = ft
+        user.auto_daily_words = 1 if request.form.get('auto_daily_words') == '1' else 0
+        # 词书或自动选词开关改变后，重新建立当天自动计划；手动添加的 TodayExtra 会保留。
+        TodayPlan.query.filter_by(user_id=user.id, plan_date=date.today()).delete(
+            synchronize_session=False)
         db.session.commit()
         flash('设置已保存', 'success')
         return redirect(url_for('settings'))
@@ -529,7 +560,15 @@ def wordbook():
     status_filter = request.args.get('status', 'all')
     category = request.args.get('category', '')
     progress_map = {p.word_id: p for p in UserWordProgress.query.filter_by(user_id=user.id).all()}
+    excluded_ids = {item[0] for item in db.session.query(UserExcludedWord.word_id).filter_by(user_id=user.id).all()}
     words = level_word_query(user).order_by(Word.id.asc()).all()
+    familiar_only = category == 'familiar'
+    if category == 'deleted':
+        words = [item.word for item in UserExcludedWord.query.filter_by(user_id=user.id).all() if item.word]
+    elif category == 'mastered':
+        words = [item.word for item in UserMasteredWord.query.filter_by(user_id=user.id).all() if item.word]
+    elif excluded_ids:
+        words = [w for w in words if w.id not in excluded_ids]
 
     today_date = date.today()
     if category == 'new_today':
@@ -543,9 +582,10 @@ def wordbook():
                 p.last_reviewed_at.date() < today_date):
                 review_ids.add(p.word_id)
         words = [w for w in words if w.id in review_ids]
-    elif category == 'familiar':
+    elif familiar_only:
         words = [w for w in words if w.id in progress_map and progress_map[w.id].status == 'familiar']
 
+    words = apply_word_overrides(user, words)
     rows = []
     for w in words:
         p = progress_map.get(w.id)
@@ -554,10 +594,11 @@ def wordbook():
             'id': w.id, 'english': w.english, 'chinese': w.chinese,
             'phonetic': w.phonetic or '', 'status': status,
             'progress': p,
+            'deleted': w.id in excluded_ids,
         })
     if status_filter != 'all' and not category:
         rows = [r for r in rows if r['status'] == status_filter]
-    status_map = {'new': '新词', 'learning': '学习中', 'familiar': '熟悉'}
+    status_map = {'new': '新词', 'learning': '学习中', 'familiar': '熟悉', 'mastered': '已会'}
     level_label = LEVEL_LABELS.get(user.vocab_level or 'cet4', '四级')
     # 整体进度统计（基于用户当前词汇本）
     all_level_words = level_word_query(user).all()
@@ -583,12 +624,17 @@ def today():
     """
     user = current_user()
     today_words, new_words, review_words = get_today_words(user)
+    new_word_ids = {word.id for word in new_words}
+    new_count = sum(1 for word in today_words if word.id in new_word_ids)
+    review_extra_count = max(0, len(today_words) - new_count)
     progress_map = {p.word_id: p for p in UserWordProgress.query.filter_by(user_id=user.id).all()}
     status_map = {'new': '新词', 'learning': '学习中', 'familiar': '熟悉'}
     return render_template('today.html', words=today_words, progress_map=progress_map,
                            status_map=status_map, user=user,
                            today_learned=get_today_learned_count(user),
                            goal=get_user_daily_goal(user),
+                           new_count=new_count,
+                           review_extra_count=review_extra_count,
                            familiar_threshold=get_user_familiar_threshold(user),
                            forgotten_mode=False)
 
@@ -809,11 +855,13 @@ def mark_word(word_id):
         p = UserWordProgress(user_id=user.id, word_id=word.id, status='learning')
         db.session.add(p)
 
-    # 一天一个单词只能要么进度清零要么进度加1/3，不能连续加熟练
+    # 熟悉词到期后的这一次是最终复习：答对进入“已会”，答错则重新开始熟悉周期。
     # 若今天已标记为 known（is_known_today==1 且 last_reviewed_at 是今天）则不再重复加 1/3
     today_date = date.today()
     was_known_today = (p.is_known_today == 1 and p.last_reviewed_at is not None
                        and p.last_reviewed_at.date() == today_date)
+    is_familiar_review = (p.status == 'familiar' and p.next_review_at is not None
+                          and p.next_review_at <= now)
 
     p.last_reviewed_at = now
     p.is_known_today = 1 if result == 'known' else 0
@@ -823,16 +871,24 @@ def mark_word(word_id):
         if not was_known_today:
             p.consecutive_correct = (p.consecutive_correct or 0) + 1
         threshold = get_user_familiar_threshold(user)
-        if p.consecutive_correct >= threshold:
+        if is_familiar_review:
+            p.status = 'mastered'
+            p.next_review_at = None
+            mastered = UserMasteredWord.query.filter_by(
+                user_id=user.id, word_id=word.id).first()
+            if not mastered:
+                db.session.add(UserMasteredWord(user_id=user.id, word_id=word.id))
+        elif p.consecutive_correct >= threshold:
             p.status = 'familiar'
             p.next_review_at = now + timedelta(days=app.config['FAMILIAR_REVIEW_DAYS'])
         else:
             p.status = 'learning'
     else:
-        # forgotten：彻底重置——清零进度，状态回退到 learning，清除熟悉态标记
+        # 熟悉词复习日答错：清零并安排 30 天后重新进入熟悉复习。
         p.consecutive_correct = 0
         p.status = 'learning'
-        p.next_review_at = None
+        p.next_review_at = (now + timedelta(days=app.config['FAMILIAR_REVIEW_DAYS'])
+                            if is_familiar_review else None)
 
     db.session.commit()
     return jsonify(
@@ -841,6 +897,7 @@ def mark_word(word_id):
         consecutive=p.consecutive_correct,
         next_review_at=p.next_review_at.strftime('%Y-%m-%d') if p.next_review_at else None,
         familiar_threshold=get_user_familiar_threshold(user),
+        mastered=is_familiar_review and result == 'known',
     )
 
 
@@ -853,8 +910,10 @@ def vocab_custom():
     """自选词汇本管理：搜索框 + 已添加列表 + 手动添加。"""
     user = current_user()
     items = UserCustomWord.query.filter_by(user_id=user.id).order_by(UserCustomWord.added_at.desc()).all()
-    rows = [{'id': c.word.id, 'english': c.word.english, 'chinese': c.word.chinese,
-             'phonetic': c.word.phonetic or '', 'tag': c.word.tag or ''} for c in items]
+    words = [c.word for c in items if c.word]
+    words = apply_word_overrides(user, words)
+    rows = [{'id': word.id, 'english': word.english, 'chinese': word.chinese,
+             'phonetic': word.phonetic or '', 'tag': word.tag or ''} for word in words]
     return render_template('vocab_custom.html', rows=rows, user=user)
 
 
@@ -892,9 +951,10 @@ def vocab_search():
     user = current_user()
     added_ids = set(db.session.query(UserCustomWord.word_id).filter_by(user_id=user.id).all())
     added_ids = {i[0] for i in added_ids}
+    display_words = apply_word_overrides(user, unique_words)
     results = [{'id': w.id, 'english': w.english, 'chinese': w.chinese,
                 'phonetic': w.phonetic or '', 'tag': w.tag or '',
-                'added': w.id in added_ids} for w in unique_words]
+                'added': w.id in added_ids} for w in display_words]
     return jsonify(success=True, results=results)
 
 
@@ -907,6 +967,7 @@ def vocab_custom_add():
     manual_en = (request.form.get('english') or '').strip()
     manual_cn = (request.form.get('chinese') or '').strip()
     manual_ph = (request.form.get('phonetic') or '').strip()
+    conflict = False
 
     if word_id:
         w = Word.query.get(word_id)
@@ -914,9 +975,10 @@ def vocab_custom_add():
             return jsonify(success=False, message='单词不存在'), 404
     elif manual_en:
         # 手动添加新词到词库（tag 标记 manual）
-        exist = Word.query.filter_by(english=manual_en).first()
+        exist = Word.query.filter(db.func.lower(Word.english) == manual_en.lower()).first()
         if exist:
             w = exist
+            conflict = True
         else:
             w = Word(english=manual_en, chinese=manual_cn or '（待补充释义）',
                      phonetic=manual_ph, tag='manual', frequency=0)
@@ -925,11 +987,20 @@ def vocab_custom_add():
     else:
         return jsonify(success=False, message='请提供 word_id 或 english'), 400
 
-    exist = UserCustomWord.query.filter_by(user_id=user.id, word_id=w.id).first()
-    if not exist:
-        db.session.add(UserCustomWord(user_id=user.id, word_id=w.id))
-        db.session.commit()
-    return jsonify(success=True, english=w.english, word_id=w.id)
+    custom_item = UserCustomWord.query.filter_by(user_id=user.id, word_id=w.id).first()
+    if custom_item:
+        return jsonify(success=False, message='该词已存在', duplicate=True), 409
+    db.session.add(UserCustomWord(user_id=user.id, word_id=w.id))
+    # 手动释义优先，但只写入当前用户的覆盖表，不修改公共词库。
+    if manual_cn:
+        override = UserWordOverride.query.filter_by(user_id=user.id, word_id=w.id).first()
+        if override:
+            override.chinese = manual_cn
+        else:
+            db.session.add(UserWordOverride(user_id=user.id, word_id=w.id, chinese=manual_cn))
+    db.session.commit()
+    return jsonify(success=True, english=w.english, chinese=manual_cn or w.chinese, word_id=w.id,
+                   conflict=conflict)
 
 
 @app.route('/vocab/custom/remove/<int:word_id>', methods=['POST'])
@@ -945,12 +1016,79 @@ def vocab_custom_remove(word_id):
     return jsonify(success=False, message='未找到该记录'), 404
 
 
+@app.route('/api/today/exclude/<int:word_id>', methods=['POST'])
+@login_required
+def exclude_today_word(word_id):
+    """永久移出当前用户的今日背诵自动清单。"""
+    user = current_user()
+    Word.query.get_or_404(word_id)
+    item = UserExcludedWord.query.filter_by(user_id=user.id, word_id=word_id).first()
+    if not item:
+        db.session.add(UserExcludedWord(user_id=user.id, word_id=word_id))
+    TodayPlan.query.filter_by(user_id=user.id, word_id=word_id, plan_date=date.today()).delete(
+        synchronize_session=False)
+    TodayExtra.query.filter_by(user_id=user.id, word_id=word_id, added_date=date.today()).delete(
+        synchronize_session=False)
+    db.session.commit()
+    return jsonify(success=True)
+
+
+@app.route('/api/today/exclude_words', methods=['POST'])
+@login_required
+def exclude_today_words():
+    """批量永久移出当前用户的今日背诵清单。"""
+    user = current_user()
+    raw_ids = request.form.get('word_ids', '')
+    word_ids = {int(value) for value in raw_ids.split(',') if value.strip().isdigit()}
+    if not word_ids:
+        return jsonify(success=False, message='未选择单词'), 400
+    valid_ids = {word.id for word in Word.query.filter(Word.id.in_(word_ids)).all()}
+    existing_ids = {item.word_id for item in UserExcludedWord.query.filter(
+        UserExcludedWord.user_id == user.id,
+        UserExcludedWord.word_id.in_(valid_ids),
+    ).all()}
+    for current_word_id in valid_ids - existing_ids:
+        db.session.add(UserExcludedWord(user_id=user.id, word_id=current_word_id))
+    TodayPlan.query.filter(
+        TodayPlan.user_id == user.id,
+        TodayPlan.plan_date == date.today(),
+        TodayPlan.word_id.in_(valid_ids),
+    ).delete(synchronize_session=False)
+    TodayExtra.query.filter(
+        TodayExtra.user_id == user.id,
+        TodayExtra.added_date == date.today(),
+        TodayExtra.word_id.in_(valid_ids),
+    ).delete(synchronize_session=False)
+    db.session.commit()
+    return jsonify(success=True, removed=len(valid_ids))
+
+
+@app.route('/api/word/<int:word_id>/override', methods=['POST'])
+@login_required
+def override_word_definition(word_id):
+    """保存当前用户自己的单词释义覆盖。"""
+    user = current_user()
+    Word.query.get_or_404(word_id)
+    chinese = (request.form.get('chinese') or '').strip()
+    if not chinese or len(chinese) > 512:
+        return jsonify(success=False, message='释义不能为空且不能超过 512 字'), 400
+    item = UserWordOverride.query.filter_by(user_id=user.id, word_id=word_id).first()
+    if item:
+        item.chinese = chinese
+    else:
+        db.session.add(UserWordOverride(user_id=user.id, word_id=word_id, chinese=chinese))
+    db.session.commit()
+    return jsonify(success=True, chinese=chinese)
+
+
 @app.route('/api/word/<int:word_id>/forget', methods=['POST'])
 @login_required
 def forget_word(word_id):
     """单词书忘记按钮：将单词进度重置为未掌握。"""
     user = current_user()
     word = Word.query.get_or_404(word_id)
+    UserMasteredWord.query.filter_by(user_id=user.id, word_id=word.id).delete(
+        synchronize_session=False)
     p = UserWordProgress.query.filter_by(user_id=user.id, word_id=word.id).first()
     now = datetime.now()
     if not p:
@@ -1446,6 +1584,8 @@ def today_add_words():
             db.session.add(TodayPlan(user_id=user.id, word_id=wid,
                                      plan_date=today, role='extra'))
             added += 1
+        UserExcludedWord.query.filter_by(user_id=user.id, word_id=wid).delete(
+            synchronize_session=False)
     db.session.commit()
     return jsonify(success=True, added=added)
 
@@ -1469,7 +1609,9 @@ def today_add_group(gid):
             if not plan_exist:
                 db.session.add(TodayPlan(user_id=user.id, word_id=it.word_id,
                                          plan_date=today, role='extra'))
-                added += 1
+            UserExcludedWord.query.filter_by(user_id=user.id, word_id=it.word_id).delete(
+                synchronize_session=False)
+            added += 1
     db.session.commit()
     return jsonify(success=True, added=added)
 
@@ -1536,5 +1678,4 @@ with app.app_context():
     db.create_all()  # 首次运行自动建表
 
 if __name__ == '__main__':
-    # 然后要到flask配置 修改选项里面 找到 flask调试
     app.run(debug=True, host='0.0.0.0', port=5000)

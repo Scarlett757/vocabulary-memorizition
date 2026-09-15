@@ -9,6 +9,7 @@ itsdangerous==2.2.0
 MarkupSafe==3.0.3
 click==8.5.0
 blinker==1.9.0
+pandas==2.2.3
 
 # 发音音频按需生成
 edge-tts==7.2.8

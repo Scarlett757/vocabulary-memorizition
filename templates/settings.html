@@ -92,6 +92,20 @@
             </div>
         </div>
 
+        <div class="setting-row">
+            <div class="setting-label">
+                <h3>系统自动选词</h3>
+                <p class="setting-hint">开启后按当前词书自动加入新词和复习词；关闭后今日清单只保留你手动加入的单词</p>
+            </div>
+            <div class="setting-control">
+                <label class="toggle-label">
+                    <input type="checkbox" name="auto_daily_words" value="1" {{ 'checked' if user.auto_daily_words !=0
+                        else '' }}>
+                    自动加入今日清单
+                </label>
+            </div>
+        </div>
+
         <div class="settings-actions">
             <button type="submit" class="btn-primary">保存设置</button>
             <a href="{{ url_for('index') }}" class="btn-ghost">返回</a>

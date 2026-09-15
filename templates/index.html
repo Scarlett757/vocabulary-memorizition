@@ -3,7 +3,8 @@
 {% block content %}
 <div class="hero">
     <h1 class="hero-title">今日单词，日积月累</h1>
-    <p class="hero-sub">欢迎回来，{{ user.username }}。当前词汇本：<strong>{{ level_label }}</strong>，今日目标 {{ goal }} 个，已完成 {{ today_learned }} 个。</p>
+    <p class="hero-sub">欢迎回来，{{ user.username }}。当前词汇本：<strong>{{ level_label }}</strong>，今日目标 {{ goal }} 个，已完成 {{
+        today_learned }} 个。</p>
 </div>
 
 <div class="stat-row">
@@ -59,10 +60,10 @@
     </a>
 
     <a href="{{ url_for('today_forgotten') }}" class="entry-card card-forgot">
-    <div class="card-icon">忘记</div>
-    <h2 class="card-title">今日忘记</h2>
-    <p class="card-desc">今天点过忘记的单词共 {{ forgotten_count }} 个，可单独背诵巩固哦</p>
-    <span class="card-link">背诵 →</span>
+        <div class="card-icon">忘记</div>
+        <h2 class="card-title">今日忘记</h2>
+        <p class="card-desc">今天点过忘记的单词共 {{ forgotten_count }} 个，可单独背诵巩固哦</p>
+        <span class="card-link">背诵 →</span>
     </a>
 </div>
 
